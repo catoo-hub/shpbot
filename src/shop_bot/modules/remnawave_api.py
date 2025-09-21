@@ -67,6 +67,14 @@ def _normalize_username_for_remnawave(name: str | None) -> str:
         base = f"u{base}" if base else f"user{int(datetime.utcnow().timestamp())}"
     if len(base) > 32:
         base = base[:32].rstrip("_-") or base[:32]
+    # Ensure minimum length 3
+    if len(base) < 3:
+        # Pad with digits from timestamp or 'usr'
+        suffix = str(int(datetime.utcnow().timestamp()))
+        base = (base + suffix)[:3]
+        # As a final fallback
+        if len(base) < 3:
+            base = (base + "usr")[:3]
     return base
 
 def _load_config() -> dict[str, Any]:
