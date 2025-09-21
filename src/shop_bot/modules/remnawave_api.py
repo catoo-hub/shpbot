@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
 from urllib.parse import quote
+import re
 
 import httpx
 
@@ -13,6 +14,32 @@ logger = logging.getLogger(__name__)
 
 class RemnawaveAPIError(RuntimeError):
     """Base error for Remnawave API interactions."""
+
+
+def _normalize_email_for_remnawave(email: str) -> str:
+    """Normalize and validate email for Remnawave API.
+
+    - Lowercases the email
+    - If domain is missing or email invalid, tries to sanitize local-part by replacing
+      any characters outside [a-z0-9._+-] with '_'
+    - Validates with a conservative regex that excludes '/'
+    - Raises RemnawaveAPIError if validation still fails
+    """
+    if not email:
+        raise RemnawaveAPIError("email is required")
+    e = (email or "").strip().lower()
+    # Basic split
+    if "@" not in e:
+        raise RemnawaveAPIError(f"Invalid email (no domain): {email}")
+    local, domain = e.split("@", 1)
+    # Sanitize local part: allowed a-z0-9._+- ; replace others with '_'
+    safe_local = re.sub(r"[^a-z0-9._+\-]", "_", local)
+    e_sanitized = f"{safe_local}@{domain}"
+    # Conservative validator (no slash, etc.)
+    pattern = re.compile(r"^[a-z0-9._+\-]+@[a-z0-9\-]+\.[a-z0-9.\-]+$")
+    if not pattern.match(e_sanitized):
+        raise RemnawaveAPIError(f"Invalid email after normalization: {e_sanitized}")
+    return e_sanitized
 
 
 def _load_config() -> dict[str, Any]:
@@ -187,6 +214,8 @@ async def ensure_user(
     if not squad_uuid:
         raise RemnawaveAPIError("squad_uuid is required for ensure_user")
 
+    # Normalize/validate email once and use for both search and payloads
+    email = _normalize_email_for_remnawave(email)
     current = await get_user_by_email(email, host_name=host_name)
     expire_iso = _to_iso(expire_at)
     traffic_limit_strategy = traffic_limit_strategy or "NO_RESET"
