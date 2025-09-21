@@ -50,6 +50,25 @@ def _normalize_email_for_remnawave(email: str) -> str:
     return e_sanitized
 
 
+def _normalize_username_for_remnawave(name: str | None) -> str:
+    """Normalize username to only letters, numbers, underscores and dashes.
+
+    - Lowercase
+    - Replace invalid characters with '_'
+    - Trim leading/trailing '_' and '-'
+    - Ensure starts with alnum; if not, prefix with 'u'
+    - Limit length to 32 characters
+    - Fallback to 'user<timestamp>' if empty
+    """
+    base = (name or "").strip().lower()
+    base = re.sub(r"[^a-z0-9_\-]", "_", base)
+    base = base.strip("_-")
+    if not base or not re.match(r"^[a-z0-9]", base):
+        base = f"u{base}" if base else f"user{int(datetime.utcnow().timestamp())}"
+    if len(base) > 32:
+        base = base[:32].rstrip("_-") or base[:32]
+    return base
+
 def _load_config() -> dict[str, Any]:
     """Backward-compatible global config loader (deprecated)."""
     base_url = (rw_repo.get_setting("remnawave_base_url") or "").strip().rstrip("/")
@@ -276,7 +295,7 @@ async def ensure_user(
             squad_uuid,
             expire_iso,
         )
-        generated_username = username or email.split("@")[0] or f"user-{int(datetime.utcnow().timestamp())}"
+        generated_username = _normalize_username_for_remnawave(username or email.split("@")[0])
         payload = {
             "username": generated_username,
             "status": "ACTIVE",
