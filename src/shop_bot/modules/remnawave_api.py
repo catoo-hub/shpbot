@@ -33,11 +33,19 @@ def _normalize_email_for_remnawave(email: str) -> str:
         raise RemnawaveAPIError(f"Invalid email (no domain): {email}")
     local, domain = e.split("@", 1)
     # Sanitize local part: allowed a-z0-9._+- ; replace others with '_'
-    safe_local = re.sub(r"[^a-z0-9._+\-]", "_", local)
-    e_sanitized = f"{safe_local}@{domain}"
-    # Conservative validator (no slash, etc.)
-    pattern = re.compile(r"^[a-z0-9._+\-]+@[a-z0-9\-]+\.[a-z0-9.\-]+$")
-    if not pattern.match(e_sanitized):
+    local = re.sub(r"[^a-z0-9._+\-]", "_", local)
+    # Collapse multiple dots
+    local = re.sub(r"\.+", ".", local)
+    # Trim leading/trailing forbidden chars (dot, underscore, hyphen)
+    local = local.strip("._-")
+    # Ensure starts with alnum; if not, prefix with 'u'
+    if not local or not re.match(r"^[a-z0-9]", local):
+        local = f"u{local}" if local else f"user{int(datetime.utcnow().timestamp())}"
+    e_sanitized = f"{local}@{domain}"
+    # Conservative validator: local-part must start/end with alnum, no consecutive dots, domain has at least one dot
+    pattern = re.compile(r"^[a-z0-9](?:[a-z0-9._+\-]*[a-z0-9])?@[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?)+$")
+    # Reject consecutive dots explicitly
+    if ".." in e_sanitized or not pattern.match(e_sanitized):
         raise RemnawaveAPIError(f"Invalid email after normalization: {e_sanitized}")
     return e_sanitized
 
