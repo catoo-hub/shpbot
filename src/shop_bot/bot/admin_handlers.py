@@ -22,6 +22,7 @@ from shop_bot.data_manager.remnawave_repository import (
     get_keys_for_user,
     create_gift_key,
     get_all_hosts,
+    get_all_ssh_targets,
     add_to_balance,
     deduct_from_balance,
     ban_user,
@@ -125,6 +126,25 @@ def get_admin_router() -> Router:
             reply_markup=keyboards.create_admin_hosts_pick_keyboard(hosts, action="speedtest")
         )
 
+    # --- Speedtest: SSH targets list ---
+    @admin_router.callback_query(F.data == "admin_speedtest_ssh_targets")
+    async def admin_speedtest_ssh_targets(callback: types.CallbackQuery):
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        await callback.answer()
+        targets = get_all_ssh_targets() or []
+        try:
+            await callback.message.edit_text(
+                "🔌 <b>SSH цели для Speedtest</b>\nВыберите цель:",
+                reply_markup=keyboards.create_admin_ssh_targets_keyboard(targets)
+            )
+        except Exception:
+            await callback.message.answer(
+                "🔌 <b>SSH цели для Speedtest</b>\nВыберите цель:",
+                reply_markup=keyboards.create_admin_ssh_targets_keyboard(targets)
+            )
+
     # --- Speedtest: запуск по выбранному хосту ---
     @admin_router.callback_query(F.data.startswith("admin_speedtest_pick_host_"))
     async def admin_speedtest_run(callback: types.CallbackQuery):
@@ -184,6 +204,76 @@ def get_admin_router() -> Router:
         )
 
         # Локально обновим сообщение
+        if wait_msg:
+            try:
+                await wait_msg.edit_text(text_res)
+            except Exception:
+                await callback.message.answer(text_res)
+        else:
+            await callback.message.answer(text_res)
+
+        # Разослать финал всем админам
+        for aid in admin_ids:
+            if wait_msg and aid == callback.from_user.id:
+                continue
+            try:
+                await callback.bot.send_message(aid, text_res)
+            except Exception:
+                pass
+
+    # --- Speedtest: запуск по SSH-цели ---
+    @admin_router.callback_query(F.data.startswith("admin_speedtest_pick_target_"))
+    async def admin_speedtest_run_target(callback: types.CallbackQuery):
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        await callback.answer()
+        target_name = callback.data.replace("admin_speedtest_pick_target_", "", 1)
+
+        # Оповещение администраторов о старте
+        try:
+            from shop_bot.data_manager.remnawave_repository import get_admin_ids
+            admin_ids = list({*(get_admin_ids() or []), int(callback.from_user.id)})
+        except Exception:
+            admin_ids = [int(callback.from_user.id)]
+        initiator = _format_user_mention(callback.from_user)
+        start_text = f"🚀 Запущен тест скорости (SSH-цель): <b>{target_name}</b>\n(инициатор: {initiator})"
+        for aid in admin_ids:
+            try:
+                await callback.bot.send_message(aid, start_text)
+            except Exception:
+                pass
+
+        # Локальный статус
+        try:
+            wait_msg = await callback.message.answer(f"⏳ Выполняю тест скорости для SSH-цели <b>{target_name}</b>…")
+        except Exception:
+            wait_msg = None
+
+        # Выполнить тест (только SSH) и сохранить в БД
+        try:
+            result = await speedtest_runner.run_and_store_ssh_speedtest_for_target(target_name)
+        except Exception as e:
+            result = {"ok": False, "error": str(e)}
+
+        # Формирование текста
+        if not result.get("ok"):
+            text_res = f"🏁 Тест скорости (SSH-цель) завершён для <b>{target_name}</b>\n❌ {result.get('error') or 'ошибка'}"
+        else:
+            ping = result.get('ping_ms')
+            down = result.get('download_mbps')
+            up = result.get('upload_mbps')
+            srv = result.get('server_name') or '—'
+            text_res = (
+                f"🏁 Тест скорости (SSH-цель) завершён для <b>{target_name}</b>\n\n"
+                f"<b>SSH:</b> ✅\n"
+                f"• ping: {ping if ping is not None else '—'} ms\n"
+                f"• ↓ {down if down is not None else '—'} Mbps\n"
+                f"• ↑ {up if up is not None else '—'} Mbps\n"
+                f"• сервер: {srv}"
+            )
+
+        # Обновление сообщения/ответ
         if wait_msg:
             try:
                 await wait_msg.edit_text(text_res)
@@ -353,6 +443,31 @@ def get_admin_router() -> Router:
         from shop_bot.data_manager.speedtest_runner import auto_install_speedtest_on_host
         try:
             res = await auto_install_speedtest_on_host(host_name)
+        except Exception as e:
+            res = {"ok": False, "log": f"Ошибка: {e}"}
+        text = ("✅ Автоустановка завершена успешно" if res.get("ok") else "❌ Автоустановка завершилась с ошибкой")
+        text += f"\n<pre>{(res.get('log') or '')[:3500]}</pre>"
+        if wait:
+            try:
+                await wait.edit_text(text)
+            except Exception:
+                await callback.message.answer(text)
+
+    # --- Speedtest: Автоустановка на SSH-цели ---
+    @admin_router.callback_query(F.data.startswith("admin_speedtest_autoinstall_target_"))
+    async def admin_speedtest_autoinstall_target(callback: types.CallbackQuery):
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        await callback.answer()
+        target_name = callback.data.replace("admin_speedtest_autoinstall_target_", "", 1)
+        try:
+            wait = await callback.message.answer(f"🛠 Пытаюсь установить speedtest на SSH-цели <b>{target_name}\</b>…")
+        except Exception:
+            wait = None
+        from shop_bot.data_manager.speedtest_runner import auto_install_speedtest_on_target
+        try:
+            res = await auto_install_speedtest_on_target(target_name)
         except Exception as e:
             res = {"ok": False, "log": f"Ошибка: {e}"}
         text = ("✅ Автоустановка завершена успешно" if res.get("ok") else "❌ Автоустановка завершилась с ошибкой")

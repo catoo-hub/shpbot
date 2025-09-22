@@ -186,15 +186,18 @@ def create_webhook_app(bot_controller_instance):
     @login_required
     def dashboard_page():
         hosts = []
+        ssh_targets = []
         try:
             hosts = get_all_hosts()
-            for h in hosts:
-                try:
-                    h['latest_speedtest'] = get_latest_speedtest(h['host_name'])
-                except Exception:
-                    h['latest_speedtest'] = None
+            ssh_targets = get_all_ssh_targets()
         except Exception:
             hosts = []
+            ssh_targets = []
+        for h in hosts:
+            try:
+                h['latest_speedtest'] = get_latest_speedtest(h['host_name'])
+            except Exception:
+                h['latest_speedtest'] = None
         stats = {
             "user_count": get_user_count(),
             "total_keys": get_total_keys_count(),
@@ -213,12 +216,12 @@ def create_webhook_app(bot_controller_instance):
         
         return render_template(
             'dashboard.html',
-            stats=stats,
+            hosts=hosts,
+            ssh_targets=ssh_targets,
             chart_data=chart_data,
             transactions=transactions,
             current_page=page,
             total_pages=total_pages,
-            hosts=hosts,
             **common_data
         )
 

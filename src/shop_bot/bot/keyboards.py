@@ -465,15 +465,35 @@ def create_admin_hosts_pick_keyboard(hosts: list[dict], action: str = "gift") ->
     # Дополнительные опции для speedtest
     if action == "speedtest":
         builder.button(text="🚀 Запустить для всех", callback_data="admin_speedtest_run_all")
+        builder.button(text="🔌 SSH цели", callback_data="admin_speedtest_ssh_targets")
     builder.button(text="⬅️ Назад", callback_data=f"admin_{action}_back_to_users")
     # Сетка: по 2 в ряд для speedtest (хост + автоустановка), иначе по 1
     if action == "speedtest":
         rows = [2] * (len(hosts) if hosts else 1)
-        tail = [1, 1]
+        # "Запустить для всех", "SSH цели" и "Назад"
+        tail = [2, 1]
     else:
         rows = [1] * (len(hosts) if hosts else 1)
         tail = [1]
     builder.adjust(*(rows + tail))
+    return builder.as_markup()
+
+
+def create_admin_ssh_targets_keyboard(ssh_targets: list[dict]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if ssh_targets:
+        for t in ssh_targets:
+            name = t.get('target_name')
+            # две кнопки в ряд: тест и автоустановка
+            builder.button(text=name, callback_data=f"admin_speedtest_pick_target_{name}")
+            builder.button(text="🛠 Автоустановка", callback_data=f"admin_speedtest_autoinstall_target_{name}")
+    else:
+        builder.button(text="SSH-целей нет", callback_data="noop")
+    builder.button(text="⬅️ К хостам", callback_data="admin_speedtest")
+    # по 2 в ряд для целей, затем 1 для "назад"
+    rows = [2] * (len(ssh_targets) if ssh_targets else 1)
+    rows.append(1)
+    builder.adjust(*rows)
     return builder.as_markup()
 
 def create_admin_keys_for_host_keyboard(host_name: str, keys: list[dict]) -> InlineKeyboardMarkup:

@@ -22,13 +22,30 @@
       <div class="card-body py-2">
         <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
           <div class="me-2" style="min-width:260px; max-width:420px; flex:1 1 auto;">
-            <label class="form-label mb-1 small">Хост</label>
-            <div class="soft-select" id="st_host_softselect" data-target="st-host">
+            <div class="d-flex align-items-center justify-content-between">
+              <label class="form-label mb-1 small mb-0">Хост/Цель</label>
+              <div class="btn-group btn-group-xs" role="group" aria-label="speedtest-mode">
+                <input type="radio" class="btn-check" name="st-mode" id="st-mode-host" autocomplete="off" checked>
+                <label class="btn btn-outline-primary btn-xs" for="st-mode-host">Хост</label>
+                <input type="radio" class="btn-check" name="st-mode" id="st-mode-target" autocomplete="off">
+                <label class="btn btn-outline-primary btn-xs" for="st-mode-target">SSH цель</label>
+              </div>
+            </div>
+            <div class="soft-select mt-1" id="st_host_softselect" data-target="st-host">
               <button type="button" class="soft-select-toggle" id="st_host_toggle">Выберите хост...</button>
               <div class="soft-select-menu" id="st_host_menu"></div>
               <select id="st-host" class="form-select form-select-sm select-soft">
                 {% for h in hosts %}
                 <option value="{{ h.host_name }}">{{ h.host_name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="soft-select mt-1 d-none" id="st_target_softselect" data-target="st-target">
+              <button type="button" class="soft-select-toggle" id="st_target_toggle">Выберите SSH цель...</button>
+              <div class="soft-select-menu" id="st_target_menu"></div>
+              <select id="st-target" class="form-select form-select-sm select-soft">
+                {% for t in ssh_targets %}
+                <option value="{{ t.target_name }}">{{ t.target_name }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -253,15 +270,28 @@
     }
     // Top compact block logic
     const hostSelect = document.getElementById('st-host');
+    const targetSelect = document.getElementById('st-target');
+    const hostWrap = document.getElementById('st_host_softselect');
+    const targetWrap = document.getElementById('st_target_softselect');
+    const modeHost = document.getElementById('st-mode-host');
+    const modeTarget = document.getElementById('st-mode-target');
     const latestBox = document.getElementById('st-latest');
     const topCanvas = document.getElementById('st-top-canvas');
     const runForm = document.getElementById('st-run-form');
     let topChart = null;
 
+    function getActiveSelect(){ return (modeTarget && modeTarget.checked) ? targetSelect : hostSelect; }
+    function syncWrapVisibility(){
+      const isTarget = modeTarget && modeTarget.checked;
+      if (hostWrap) hostWrap.classList.toggle('d-none', !!isTarget);
+      if (targetWrap) targetWrap.classList.toggle('d-none', !isTarget);
+    }
+
     async function loadAndDrawTop(){
-      if (!hostSelect || !topCanvas) return;
-      const host = hostSelect.value;
-      const url = `{{ url_for('host_speedtests_json', host_name='__HOST__') }}`.replace('__HOST__', encodeURIComponent(host));
+      const sel = getActiveSelect();
+      if (!sel || !topCanvas) return;
+      const name = sel.value;
+      const url = `{{ url_for('host_speedtests_json', host_name='__HOST__') }}`.replace('__HOST__', encodeURIComponent(name));
       try {
         const resp = await fetch(url + '?limit=60', {headers: {'Accept': 'application/json'}});
         const data = await resp.json();
@@ -313,11 +343,14 @@
         });
       } catch(e) {}
     }
-    if (hostSelect) {
-      initSoftSelect('st-host', 'Выберите хост...');
-      hostSelect.addEventListener('change', loadAndDrawTop);
-      await loadAndDrawTop();
-    }
+    initSoftSelect('st-host', 'Выберите хост...');
+    initSoftSelect('st-target', 'Выберите SSH цель...');
+    if (hostSelect) hostSelect.addEventListener('change', loadAndDrawTop);
+    if (targetSelect) targetSelect.addEventListener('change', loadAndDrawTop);
+    if (modeHost) modeHost.addEventListener('change', async ()=>{ syncWrapVisibility(); await loadAndDrawTop(); });
+    if (modeTarget) modeTarget.addEventListener('change', async ()=>{ syncWrapVisibility(); await loadAndDrawTop(); });
+    syncWrapVisibility();
+    await loadAndDrawTop();
     function showRunning(){
       try { new bootstrap.Modal(document.getElementById('speedtestRunningModal'), {backdrop:'static', keyboard:false}).show(); } catch(_){}
     }
@@ -325,20 +358,25 @@
       try { bootstrap.Modal.getInstance(document.getElementById('speedtestRunningModal'))?.hide(); } catch(_){}
     }
 
-    if (runForm && hostSelect) {
+    if (runForm) {
       runForm.addEventListener('submit', async (ev) => {
         ev.preventDefault();
-        const host = hostSelect.value;
+        const isTarget = modeTarget && modeTarget.checked;
+        const sel = getActiveSelect();
+        const name = sel ? sel.value : '';
         const fd = new FormData(runForm);
         try {
           showRunning();
-          const resp = await fetch(`{{ url_for('run_host_speedtest_route', host_name='__HOST__') }}`.replace('__HOST__', encodeURIComponent(host)), {
+          const runUrl = isTarget
+            ? `{{ url_for('run_ssh_target_speedtest_route', target_name='__TARGET__') }}`.replace('__TARGET__', encodeURIComponent(name))
+            : `{{ url_for('run_host_speedtest_route', host_name='__HOST__') }}`.replace('__HOST__', encodeURIComponent(name));
+          const resp = await fetch(runUrl, {
             method: 'POST', body: fd, credentials: 'same-origin'
           });
           // после выполнения — перерисуем
           setTimeout(async ()=>{ await loadAndDrawTop(); hideRunning(); }, 800);
-        } catch(_){}
-      });
+        } catch(_){}}
+      );
     }
 
     // Intercept "run for all"
@@ -346,6 +384,8 @@
     if (runAllForm) {
       runAllForm.addEventListener('submit', async (ev) => {
         ev.preventDefault();
+        // Кнопка "для всех" актуальна только для Хостов
+        if (modeTarget && modeTarget.checked) { return; }
         const fd = new FormData(runAllForm);
         try {
           showRunning();
