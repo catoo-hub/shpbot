@@ -751,15 +751,15 @@ def create_webhook_app(bot_controller_instance):
     @flask_app.route('/admin/ssh-targets/<target_name>/speedtest/run', methods=['POST'])
     @login_required
     def run_ssh_target_speedtest_route(target_name: str):
-        logger.info(f"WebPanel: Speedtest started for ssh_target='{target_name}'")
+        logger.info(f"Панель: запущен спидтест для SSH-цели '{target_name}'")
         try:
             res = asyncio.run(speedtest_runner.run_and_store_ssh_speedtest_for_target(target_name))
         except Exception as e:
             res = {"ok": False, "error": str(e)}
         if res and res.get('ok'):
-            logger.info(f"WebPanel: Speedtest finished OK for ssh_target='{target_name}'")
+            logger.info(f"Панель: спидтест для SSH-цели '{target_name}' завершён успешно")
         else:
-            logger.warning(f"WebPanel: Speedtest finished FAIL for ssh_target='{target_name}': {res.get('error') if res else 'unknown'}")
+            logger.warning(f"Панель: спидтест для SSH-цели '{target_name}' завершился с ошибкой: {res.get('error') if res else 'unknown'}")
         wants_json = 'application/json' in (request.headers.get('Accept') or '') or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
         if wants_json:
             return jsonify(res)
@@ -770,7 +770,7 @@ def create_webhook_app(bot_controller_instance):
     @flask_app.route('/admin/ssh-targets/speedtests/run-all', methods=['POST'])
     @login_required
     def run_all_ssh_target_speedtests_route():
-        logger.info("WebPanel: Speedtest RUN-ALL for ssh_targets started")
+        logger.info("Панель: запуск спидтеста ДЛЯ ВСЕХ SSH-целей")
         try:
             targets = get_all_ssh_targets()
         except Exception:
@@ -791,7 +791,7 @@ def create_webhook_app(bot_controller_instance):
                     errors.append(f"{name}: {res.get('error') if res else 'unknown'}")
             except Exception as e:
                 errors.append(f"{name}: {e}")
-        logger.info(f"WebPanel: Speedtest RUN-ALL ssh_targets finished: ok={ok_count}, total={total}")
+        logger.info(f"Панель: завершён спидтест ДЛЯ ВСЕХ SSH-целей: ок={ok_count}, всего={total}")
         wants_json = 'application/json' in (request.headers.get('Accept') or '') or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
         if wants_json:
             return jsonify({"ok": len(errors) == 0, "done": ok_count, "total": total, "errors": errors})
@@ -806,7 +806,7 @@ def create_webhook_app(bot_controller_instance):
     @login_required
     def run_host_speedtest_route(host_name: str):
         method = (request.form.get('method') or '').strip().lower()
-        logger.info(f"WebPanel: Speedtest started for host='{host_name}', method='{method or 'both'}'")
+        logger.info(f"Панель: запущен спидтест для хоста '{host_name}', метод='{method or 'both'}'")
         try:
             if method == 'ssh':
                 res = asyncio.run(speedtest_runner.run_and_store_ssh_speedtest(host_name))
@@ -818,9 +818,9 @@ def create_webhook_app(bot_controller_instance):
         except Exception as e:
             res = {'ok': False, 'error': str(e)}
         if res and res.get('ok'):
-            logger.info(f"WebPanel: Speedtest finished OK for host='{host_name}'")
+            logger.info(f"Панель: спидтест для хоста '{host_name}' завершён успешно")
         else:
-            logger.warning(f"WebPanel: Speedtest finished FAIL for host='{host_name}': {res.get('error') if res else 'unknown'}")
+            logger.warning(f"Панель: спидтест для хоста '{host_name}' завершился с ошибкой: {res.get('error') if res else 'unknown'}")
         wants_json = 'application/json' in (request.headers.get('Accept') or '') or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
         if wants_json:
             return jsonify(res)
@@ -847,7 +847,7 @@ def create_webhook_app(bot_controller_instance):
     @login_required
     def run_all_speedtests_route():
         # Запустить тесты для всех хостов (оба варианта)
-        logger.info("WebPanel: Speedtest RUN-ALL for hosts started")
+        logger.info("Панель: запуск спидтеста ДЛЯ ВСЕХ хостов")
         try:
             hosts = get_all_hosts()
         except Exception:
@@ -866,7 +866,7 @@ def create_webhook_app(bot_controller_instance):
                     errors.append(f"{name}: {res.get('error') if res else 'unknown'}")
             except Exception as e:
                 errors.append(f"{name}: {e}")
-        logger.info(f"WebPanel: Speedtest RUN-ALL hosts finished: ok={ok_count}, total={len(hosts)}")
+        logger.info(f"Панель: завершён спидтест ДЛЯ ВСЕХ хостов: ок={ok_count}, всего={len(hosts)}")
 
         wants_json = 'application/json' in (request.headers.get('Accept') or '') or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
         if wants_json:

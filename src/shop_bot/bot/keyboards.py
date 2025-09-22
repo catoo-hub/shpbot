@@ -495,10 +495,12 @@ def create_admin_ssh_targets_keyboard(ssh_targets: list[dict]) -> InlineKeyboard
             builder.button(text="🛠 Автоустановка", callback_data=f"stti:{digest}")
     else:
         builder.button(text="SSH-целей нет", callback_data="noop")
+    # Кнопка запуска для всех SSH-целей
+    builder.button(text="🚀 Запустить для всех", callback_data="admin_speedtest_run_all_targets")
     builder.button(text="⬅️ К хостам", callback_data="admin_speedtest")
     # по 2 в ряд для целей, затем 1 для "назад"
     rows = [2] * (len(ssh_targets) if ssh_targets else 1)
-    rows.append(1)
+    rows.extend([1, 1])
     builder.adjust(*rows)
     return builder.as_markup()
 

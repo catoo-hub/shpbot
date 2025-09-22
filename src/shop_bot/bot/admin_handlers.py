@@ -138,14 +138,18 @@ def get_admin_router() -> Router:
             await callback.answer("У вас нет прав.", show_alert=True)
             return
         await callback.answer()
-        hosts = get_all_hosts() or []
-        if not hosts:
-            await callback.message.answer("⚠️ Хосты не найдены в настройках.")
-            return
-        await callback.message.edit_text(
-            "⚡ Выберите хост для теста скорости:",
-            reply_markup=keyboards.create_admin_hosts_pick_keyboard(hosts, action="speedtest")
-        )
+        # Переходим сразу к списку SSH-целей
+        targets = get_all_ssh_targets() or []
+        try:
+            await callback.message.edit_text(
+                "🔌 <b>SSH цели для Speedtest</b>\nВыберите цель:",
+                reply_markup=keyboards.create_admin_ssh_targets_keyboard(targets)
+            )
+        except Exception:
+            await callback.message.answer(
+                "🔌 <b>SSH цели для Speedtest</b>\nВыберите цель:",
+                reply_markup=keyboards.create_admin_ssh_targets_keyboard(targets)
+            )
 
     # --- Speedtest: SSH targets list ---
     @admin_router.callback_query(F.data == "admin_speedtest_ssh_targets")
@@ -429,6 +433,51 @@ def get_admin_router() -> Router:
         await callback.message.answer(text)
         for aid in admin_ids:
             # Не дублируем результат инициатору/в текущий чат
+            if aid == callback.from_user.id or aid == callback.message.chat.id:
+                continue
+            try:
+                await callback.bot.send_message(aid, text)
+            except Exception:
+                pass
+
+    # --- Speedtest: Запуск для всех SSH-целей ---
+    @admin_router.callback_query(F.data == "admin_speedtest_run_all_targets")
+    async def admin_speedtest_run_all_targets(callback: types.CallbackQuery):
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        await callback.answer()
+        # Оповещение админам
+        try:
+            from shop_bot.data_manager.remnawave_repository import get_admin_ids
+            admin_ids = list({*(get_admin_ids() or []), int(callback.from_user.id)})
+        except Exception:
+            admin_ids = [int(callback.from_user.id)]
+        initiator = _format_user_mention(callback.from_user)
+        start_text = f"🚀 Запущен тест скорости для всех SSH-целей\n(инициатор: {initiator})"
+        for aid in admin_ids:
+            try:
+                await callback.bot.send_message(aid, start_text)
+            except Exception:
+                pass
+        # Пробежаться по целям
+        targets = get_all_ssh_targets() or []
+        summary_lines = []
+        for t in targets:
+            name = (t.get('target_name') or '').strip()
+            if not name:
+                continue
+            try:
+                res = await speedtest_runner.run_and_store_ssh_speedtest_for_target(name)
+                ok = bool(res.get('ok'))
+                dm = res.get('download_mbps')
+                um = res.get('upload_mbps')
+                summary_lines.append(f"• {name}: {'✅' if ok else '❌'} ↓ {dm or '—'} ↑ {um or '—'}")
+            except Exception as e:
+                summary_lines.append(f"• {name}: ❌ {e}")
+        text = "🏁 SSH-цели: тест для всех завершён:\n" + ("\n".join(summary_lines) if summary_lines else "(нет целей)")
+        await callback.message.answer(text)
+        for aid in admin_ids:
             if aid == callback.from_user.id or aid == callback.message.chat.id:
                 continue
             try:

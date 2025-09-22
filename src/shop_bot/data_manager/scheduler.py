@@ -324,6 +324,7 @@ async def _maybe_run_periodic_speedtests():
         return
     try:
         await _run_speedtests_for_all_hosts()
+        await _run_speedtests_for_all_ssh_targets()
         _last_speedtests_run_at = now
     except Exception as e:
         logger.error(f"Scheduler: Ошибка запуска speedtests: {e}", exc_info=True)
@@ -357,6 +358,34 @@ async def _run_speedtests_for_all_hosts():
             logger.warning(f"Scheduler: Таймаут speedtest для хоста '{host_name}'")
         except Exception as e:
             logger.error(f"Scheduler: Ошибка выполнения speedtest для '{host_name}': {e}", exc_info=True)
+
+async def _run_speedtests_for_all_ssh_targets():
+    targets = rw_repo.get_all_ssh_targets() or []
+    if not targets:
+        logger.debug("Scheduler: Нет SSH-целей для измерений скорости.")
+        return
+    logger.info(f"Scheduler: Запускаю SSH speedtest для {len(targets)} цел(ей)...")
+    for t in targets:
+        target_name = (t.get('target_name') or '').strip()
+        if not target_name:
+            continue
+        try:
+            logger.info(f"Scheduler: SSH speedtest для цели '{target_name}' запущен...")
+            try:
+                async with asyncio.timeout(180):
+                    res = await speedtest_runner.run_and_store_ssh_speedtest_for_target(target_name)
+            except AttributeError:
+                res = await asyncio.wait_for(speedtest_runner.run_and_store_ssh_speedtest_for_target(target_name), timeout=180)
+            ok = res.get('ok')
+            err = res.get('error')
+            if ok:
+                logger.info(f"Scheduler: SSH speedtest для цели '{target_name}' завершён успешно")
+            else:
+                logger.warning(f"Scheduler: SSH speedtest для цели '{target_name}' завершён с ошибками: {err}")
+        except asyncio.TimeoutError:
+            logger.warning(f"Scheduler: Таймаут SSH speedtest для цели '{target_name}'")
+        except Exception as e:
+            logger.error(f"Scheduler: Ошибка выполнения SSH speedtest для цели '{target_name}': {e}", exc_info=True)
 
 async def _maybe_run_daily_backup(bot: Bot):
     global _last_backup_run_at

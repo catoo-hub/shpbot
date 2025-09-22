@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Any
 from urllib.parse import quote
@@ -10,6 +11,11 @@ import httpx
 from shop_bot.data_manager import remnawave_repository as rw_repo
 
 logger = logging.getLogger(__name__)
+# Уменьшим многословность httpx по умолчанию
+try:
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+except Exception:
+    pass
 
 
 class RemnawaveAPIError(RuntimeError):
@@ -131,6 +137,13 @@ async def _request(
     headers = _build_headers(config)
 
     async with httpx.AsyncClient(cookies=config["cookies"], timeout=30.0) as client:
+        # Красивый лог запроса
+        try:
+            full_url = httpx.URL(url).copy_merge_params(params or {})
+            logger.info("➡️ Remnawave: %s %s", method.upper(), str(full_url))
+        except Exception:
+            pass
+        t0 = time.perf_counter()
         response = await client.request(
             method=method,
             url=url,
@@ -138,13 +151,20 @@ async def _request(
             json=json_payload,
             params=params,
         )
+        dt_ms = int((time.perf_counter() - t0) * 1000)
+        try:
+            status = response.status_code
+            ok = "OK" if status in expected_status else "ERROR"
+            logger.info("⬅️ Remnawave: %s %s — %s (%d мс)", method.upper(), path, f"{status} {ok}", dt_ms)
+        except Exception:
+            pass
 
     if response.status_code not in expected_status:
         try:
             detail = response.json()
         except json.JSONDecodeError:
             detail = response.text
-        logger.warning("Remnawave API %s %s failed: %s", method, path, detail)
+        logger.warning("Remnawave API %s %s завершился ошибкой: %s", method, path, detail)
         raise RemnawaveAPIError(f"Remnawave API request failed: {response.status_code} {detail}")
 
     return response
@@ -164,6 +184,13 @@ async def _request_for_host(
     headers = _build_headers(config)
 
     async with httpx.AsyncClient(cookies=config["cookies"], timeout=30.0) as client:
+        # Красивые логи HTTP-запроса для конкретного хоста
+        try:
+            full_url = httpx.URL(url).copy_merge_params(params or {})
+            logger.info("➡️ Remnawave[%s]: %s %s", host_name, method.upper(), str(full_url))
+        except Exception:
+            pass
+        t0 = time.perf_counter()
         response = await client.request(
             method=method,
             url=url,
@@ -171,6 +198,13 @@ async def _request_for_host(
             json=json_payload,
             params=params,
         )
+        dt_ms = int((time.perf_counter() - t0) * 1000)
+        try:
+            status = response.status_code
+            ok = "OK" if status in expected_status else "ERROR"
+            logger.info("⬅️ Remnawave[%s]: %s %s — %s (%d мс)", host_name, method.upper(), path, f"{status} {ok}", dt_ms)
+        except Exception:
+            pass
 
     if response.status_code not in expected_status:
         try:
