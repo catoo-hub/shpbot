@@ -8,7 +8,7 @@ import base64
 import time
 import uuid
 from hmac import compare_digest
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import wraps
 from math import ceil
 from flask import Flask, request, render_template, redirect, url_for, flash, session, current_app, jsonify, send_file
@@ -666,7 +666,6 @@ def create_webhook_app(bot_controller_instance):
     @flask_app.route('/admin/keys/sweep-expired', methods=['POST'])
     @login_required
     def sweep_expired_keys_route():
-        from datetime import datetime
         removed = 0
         failed = 0
         now = datetime.utcnow()
@@ -676,25 +675,48 @@ def create_webhook_app(bot_controller_instance):
             exp_dt = None
             try:
                 if isinstance(exp, str):
-                    try:
-                        from datetime import datetime as dt
-                        exp_dt = dt.fromisoformat(exp)
-                    except Exception:
-                        # fallback: если в БД дата как 'YYYY-MM-DD HH:MM:SS'
+                    s = exp.strip()
+                    if s:
                         try:
-                            exp_dt = datetime.strptime(exp, '%Y-%m-%d %H:%M:%S')
+                            # поддержка ISO-строк с Z/таймзоной и без неё
+                            exp_dt = datetime.fromisoformat(s)
                         except Exception:
-                            exp_dt = None
+                            try:
+                                exp_dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+                            except Exception:
+                                # fallback: форматы без таймзоны
+                                try:
+                                    exp_dt = datetime.strptime(s, '%Y-%m-%d %H:%M:%S')
+                                except Exception:
+                                    exp_dt = None
                 else:
                     exp_dt = exp
             except Exception:
                 exp_dt = None
+            # Приводим к наивному UTC для корректного сравнения
+            try:
+                if exp_dt is not None and getattr(exp_dt, 'tzinfo', None) is not None:
+                    exp_dt = exp_dt.astimezone(timezone.utc).replace(tzinfo=None)
+            except Exception:
+                pass
             if not exp_dt or exp_dt > now:
                 continue
             # Истёкший — пробуем удалить на сервере и в БД, уведомляем пользователя
             try:
                 try:
-                    asyncio.run(remnawave_api.delete_client_on_host(k.get('host_name'), k.get('key_email')))
+                    # Определяем хост: предпочтительно из записи ключа, иначе по squad_uuid
+                    host_for_delete = (k.get('host_name') or '').strip()
+                    if not host_for_delete:
+                        try:
+                            sq = (k.get('squad_uuid') or k.get('squadUuid') or '').strip()
+                            if sq:
+                                squad = rw_repo.get_squad(sq)
+                                if squad and squad.get('host_name'):
+                                    host_for_delete = squad.get('host_name')
+                        except Exception:
+                            pass
+                    if host_for_delete:
+                        asyncio.run(remnawave_api.delete_client_on_host(host_for_delete, k.get('key_email')))
                 except Exception:
                     pass
                 delete_key_by_id(k.get('key_id'))

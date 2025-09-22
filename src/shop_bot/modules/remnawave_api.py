@@ -409,6 +409,9 @@ async def list_users(host_name: str, squad_uuid: str | None = None, size: int | 
         return filtered
     return raw_users
 async def delete_user(user_uuid: str) -> bool:
+    """Глобальный вариант (устарел): удаление без привязки к хосту.
+    Сохраняется для обратной совместимости, но предпочтительно использовать host-specific путь ниже.
+    """
     if not user_uuid:
         return False
     encoded_uuid = quote(user_uuid.strip())
@@ -417,6 +420,19 @@ async def delete_user(user_uuid: str) -> bool:
         logger.info("Remnawave: пользователь %s не найден при удалении (возможно, уже удалён)", user_uuid)
     elif response.status_code in (200, 204):
         logger.info("Remnawave: пользователь %s успешно удалён (HTTP %s)", user_uuid, response.status_code)
+    return True
+
+
+async def delete_user_on_host(host_name: str, user_uuid: str) -> bool:
+    """Удаление пользователя на конкретном хосте, используя конфиг хоста."""
+    if not user_uuid:
+        return False
+    encoded_uuid = quote(user_uuid.strip())
+    response = await _request_for_host(host_name, "DELETE", f"/api/users/{encoded_uuid}", expected_status=(200, 204, 404))
+    if response.status_code == 404:
+        logger.info("Remnawave[%s]: пользователь %s не найден при удалении (возможно, уже удалён)", host_name, user_uuid)
+    elif response.status_code in (200, 204):
+        logger.info("Remnawave[%s]: пользователь %s успешно удалён (HTTP %s)", host_name, user_uuid, response.status_code)
     return True
 
 
@@ -562,7 +578,7 @@ async def delete_client_on_host(host_name: str, client_email: str) -> bool:
             logger.warning("Remnawave: нет uuid для пользователя %s", client_email)
             return False
         logger.info("Remnawave: удаляю пользователя %s (%s) на '%s'...", client_email, user_uuid, host_name)
-        await delete_user(user_uuid)
+        await delete_user_on_host(host_name, user_uuid)
         logger.info("Remnawave: пользователь %s (%s) успешно удалён на '%s'", client_email, user_uuid, host_name)
         return True
     except RemnawaveAPIError as exc:
