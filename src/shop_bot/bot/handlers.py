@@ -616,11 +616,13 @@ def get_user_router() -> Router:
             ping = last.get('ping_ms')
             down = last.get('download_mbps')
             up = last.get('upload_mbps')
-            srv = last.get('server_name') or '—'
-            ts = last.get('created_at') or ''
             ok_badge = '✅' if last.get('ok') else '❌'
+            ping_s = f"{float(ping):.2f}" if isinstance(ping, (int, float)) else '—'
+            down_s = f"{float(down):.0f}" if isinstance(down, (int, float)) else '—'
+            up_s = f"{float(up):.0f}" if isinstance(up, (int, float)) else '—'
+            # Красивый и короткий вывод: только задержка и скорости
             lines.append(
-                f"• <b>{name}</b> — SSH: {ok_badge} · ⏱ {ping if ping is not None else '—'} ms · ↓ {down if down is not None else '—'} Mbps · ↑ {up if up is not None else '—'} Mbps · 📍 {srv} · {ts}"
+                f"• <b>{name}</b> — SSH: {ok_badge} · ⏱ {ping_s} ms · ↓ {down_s} · ↑ {up_s} Mbps"
             )
         text = (
             "⚡ <b>Последние результаты Speedtest</b>\n"
