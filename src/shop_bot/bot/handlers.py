@@ -1959,7 +1959,10 @@ async def process_successful_payment(bot: Bot, metadata: dict):
                         except Exception as e:
                             logger.warning(f"Could not send referral reward notification to {referrer_id}: {e}")
 
-        update_user_stats(user_id, price, months)
+        # Не считаем покупки, оплаченные с внутреннего баланса, в "Потрачено всего"
+        pm = (payment_method or '').strip().lower()
+        spent_for_stats = 0.0 if pm == 'balance' else price
+        update_user_stats(user_id, spent_for_stats, months)
         
         user_info = get_user(user_id)
 
