@@ -218,6 +218,7 @@ def create_webhook_app(bot_controller_instance):
             'dashboard.html',
             hosts=hosts,
             ssh_targets=ssh_targets,
+            stats=stats,
             chart_data=chart_data,
             transactions=transactions,
             current_page=page,
