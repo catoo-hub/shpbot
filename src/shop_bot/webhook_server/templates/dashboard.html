@@ -353,12 +353,16 @@
         const fd = new FormData(runAllForm);
         try {
           showRunning();
-          const resp = await fetch(runAllForm.action, { method: 'POST', body: fd, credentials: 'same-origin' });
-          modal.style.display = 'none';
-        } catch(_){}}
-      );
+          await fetch(runAllForm.action, { method: 'POST', body: fd, credentials: 'same-origin' });
+          // после выполнения — просто закрываем и обновляем график
+          setTimeout(async ()=>{ await loadAndDrawTop(); hideRunning(); }, 1200);
+        } catch(_){}
+      });
     }
 
+    const modalEl = document.getElementById('speedtestModal');
+    const modal = modalEl ? new bootstrap.Modal(modalEl) : null;
+    const titleHost = document.getElementById('st-modal-host');
     const metricEl = document.getElementById('st-metric');
     const rangeEl = document.getElementById('st-range');
     const refreshBtn = document.getElementById('st-refresh');
@@ -423,21 +427,5 @@
     if (rangeEl) rangeEl.addEventListener('change', drawDetail);
   });
 </script>
-
-<!-- Add a centered modal with animated spinner -->
-<div class="modal fade" id="speedtestRunningModal" tabindex="-1" aria-labelledby="speedtestRunningModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="speedtestRunningModalLabel">Speedtest in progress...</h5>
-      </div>
-      <div class="modal-body text-center">
-        <div class="spinner-border" role="status">
-          <span class="visually-hidden">Loading...</span>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
 
 {% endblock %}

@@ -229,6 +229,18 @@ def get_admin_router() -> Router:
         )
 
         # Локально обновим сообщение
+        # Лог о завершении
+        if result.get('ok'):
+            logger.info(f"Bot/Admin: спидтест для SSH-цели '{target_name}' завершён успешно")
+        else:
+            logger.warning(f"Bot/Admin: спидтест для SSH-цели '{target_name}' завершился с ошибкой: {result.get('error')}")
+
+        # Лог о завершении
+        if result.get('ok'):
+            logger.info(f"Bot/Admin: спидтест (legacy) для SSH-цели '{target_name}' завершён успешно")
+        else:
+            logger.warning(f"Bot/Admin: спидтест (legacy) для SSH-цели '{target_name}' завершился с ошибкой: {result.get('error')}")
+
         if wait_msg:
             try:
                 await wait_msg.edit_text(text_res)
@@ -259,6 +271,7 @@ def get_admin_router() -> Router:
             return
 
         # Оповещение администраторов о старте
+        logger.info(f"Bot/Admin: запуск спидтеста для SSH-цели '{target_name}' (инициатор id={callback.from_user.id})")
         try:
             from shop_bot.data_manager.remnawave_repository import get_admin_ids
             admin_ids = list({*(get_admin_ids() or []), int(callback.from_user.id)})
@@ -326,6 +339,7 @@ def get_admin_router() -> Router:
         target_name = callback.data.replace("admin_speedtest_pick_target_", "", 1)
 
         # Оповещение администраторов о старте
+        logger.info(f"Bot/Admin: запуск спидтеста (legacy) для SSH-цели '{target_name}' (инициатор id={callback.from_user.id})")
         try:
             from shop_bot.data_manager.remnawave_repository import get_admin_ids
             admin_ids = list({*(get_admin_ids() or []), int(callback.from_user.id)})
@@ -455,6 +469,7 @@ def get_admin_router() -> Router:
             admin_ids = [int(callback.from_user.id)]
         initiator = _format_user_mention(callback.from_user)
         start_text = f"🚀 Запущен тест скорости для всех SSH-целей\n(инициатор: {initiator})"
+        logger.info(f"Bot/Admin: запуск спидтеста ДЛЯ ВСЕХ SSH-целей (инициатор id={callback.from_user.id})")
         for aid in admin_ids:
             try:
                 await callback.bot.send_message(aid, start_text)
@@ -463,6 +478,7 @@ def get_admin_router() -> Router:
         # Пробежаться по целям
         targets = get_all_ssh_targets() or []
         summary_lines = []
+        ok_total = 0
         for t in targets:
             name = (t.get('target_name') or '').strip()
             if not name:
@@ -473,9 +489,12 @@ def get_admin_router() -> Router:
                 dm = res.get('download_mbps')
                 um = res.get('upload_mbps')
                 summary_lines.append(f"• {name}: {'✅' if ok else '❌'} ↓ {dm or '—'} ↑ {um or '—'}")
+                if ok:
+                    ok_total += 1
             except Exception as e:
                 summary_lines.append(f"• {name}: ❌ {e}")
         text = "🏁 SSH-цели: тест для всех завершён:\n" + ("\n".join(summary_lines) if summary_lines else "(нет целей)")
+        logger.info(f"Bot/Admin: завершён спидтест ДЛЯ ВСЕХ SSH-целей: ок={ok_total}, всего={len(targets)}")
         await callback.message.answer(text)
         for aid in admin_ids:
             if aid == callback.from_user.id or aid == callback.message.chat.id:
@@ -606,12 +625,17 @@ def get_admin_router() -> Router:
         except Exception:
             wait = None
         from shop_bot.data_manager.speedtest_runner import auto_install_speedtest_on_target
+        logger.info(f"Bot/Admin: автоустановка speedtest на SSH-цели '{target_name}' (инициатор id={callback.from_user.id})")
         try:
             res = await auto_install_speedtest_on_target(target_name)
         except Exception as e:
             res = {"ok": False, "log": f"Ошибка: {e}"}
         text = ("✅ Автоустановка завершена успешно" if res.get("ok") else "❌ Автоустановка завершилась с ошибкой")
         text += f"\n<pre>{(res.get('log') or '')[:3500]}</pre>"
+        if res.get('ok'):
+            logger.info(f"Bot/Admin: автоустановка завершена успешно для '{target_name}'")
+        else:
+            logger.warning(f"Bot/Admin: автоустановка завершилась с ошибкой для '{target_name}'")
         if wait:
             try:
                 await wait.edit_text(text)
