@@ -465,3 +465,165 @@ async def auto_install_speedtest_on_host(host_name: str) -> dict:
 
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _install)
+
+
+# --- Support separate SSH targets (not tied to xui_hosts) ---
+
+def _target_to_host_row(target: dict) -> dict:
+    return {
+        'ssh_host': (target.get('ssh_host') or '').strip(),
+        'ssh_port': int(target.get('ssh_port') or 22),
+        'ssh_user': (target.get('ssh_user') or '').strip(),
+        'ssh_password': target.get('ssh_password'),
+        'ssh_key_path': (target.get('ssh_key_path') or '').strip() or None,
+    }
+
+
+async def run_and_store_ssh_speedtest_for_target(target_name: str) -> dict:
+    """Выполнить SSH-спидтест для отдельной цели (speedtest_ssh_targets) и сохранить результат как host_speedtests с именем цели."""
+    target = rw_repo.get_ssh_target(target_name)
+    if not target:
+        return {'ok': False, 'error': 'target not found'}
+    host_row = _target_to_host_row(target)
+    res = await ssh_speedtest_for_host(host_row)
+    rw_repo.insert_host_speedtest(
+        host_name=target_name,
+        method='ssh',
+        ping_ms=res.get('ping_ms'),
+        jitter_ms=res.get('jitter_ms'),
+        download_mbps=res.get('download_mbps'),
+        upload_mbps=res.get('upload_mbps'),
+        server_name=res.get('server_name'),
+        server_id=res.get('server_id'),
+        ok=bool(res.get('ok')),
+        error=res.get('error'),
+    )
+    return res
+
+
+async def auto_install_speedtest_on_target(target_name: str) -> dict:
+    """Автоустановка speedtest на отдельной SSH-цели."""
+    target = rw_repo.get_ssh_target(target_name)
+    if not target:
+        return {'ok': False, 'log': 'target not found'}
+
+    def _install() -> dict:
+        log_lines: list[str] = []
+        try:
+            ssh = _ssh_connect(_target_to_host_row(target))
+        except Exception as e:
+            return {'ok': False, 'log': f'SSH connect failed: {e}'}
+        try:
+            # If already installed
+            rc, out, err = _ssh_exec(ssh, 'command -v speedtest || command -v speedtest-cli || echo "NO"')
+            if 'speedtest' in out or 'speedtest-cli' in out:
+                log_lines.append('Found existing speedtest binary: ' + out.strip())
+                rc2, o2, e2 = _ssh_exec(ssh, 'speedtest --accept-license --accept-gdpr --version || true')
+                ver_text = (o2 + e2).strip()
+                if ver_text:
+                    log_lines.append(('$ speedtest --accept-license --accept-gdpr --version\n' + ver_text).strip())
+                need_reinstall = True
+                try:
+                    if '1.2.0' in ver_text:
+                        need_reinstall = False
+                except Exception:
+                    need_reinstall = True
+                if not need_reinstall:
+                    return {'ok': True, 'log': '\n'.join(log_lines)}
+                else:
+                    log_lines.append('Different Ookla speedtest version detected; reinstalling 1.2.0 via tarball.')
+
+            # Detect OS info
+            rc, out, _ = _ssh_exec(ssh, 'cat /etc/os-release || uname -a')
+            os_release = out.lower()
+            log_lines.append('OS detection: ' + out.strip())
+
+            # Tarball install 1.2.0
+            rc, arch_out, _ = _ssh_exec(ssh, 'uname -m || echo unknown')
+            arch = (arch_out or '').strip()
+            if arch in ('x86_64', 'amd64'):
+                arch_tag = 'linux-x86_64'
+            elif arch in ('aarch64', 'arm64'):
+                arch_tag = 'linux-aarch64'
+            elif arch in ('armv7l',):
+                arch_tag = 'linux-armhf'
+            else:
+                arch_tag = 'linux-x86_64'
+            tar_url = f'https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-{arch_tag}.tgz'
+            cmds_tar = [
+                f'curl -fsSL {tar_url} -o /tmp/ookla-speedtest.tgz || wget -O /tmp/ookla-speedtest.tgz {tar_url}',
+                'mkdir -p /tmp/ookla-speedtest && tar -xf /tmp/ookla-speedtest.tgz -C /tmp/ookla-speedtest',
+                'install -m 0755 /tmp/ookla-speedtest/speedtest /usr/local/bin/speedtest || (cp /tmp/ookla-speedtest/speedtest /usr/local/bin/speedtest && chmod +x /usr/local/bin/speedtest)',
+                'speedtest --accept-license --accept-gdpr --version || true',
+                'rm -rf /tmp/ookla-speedtest /tmp/ookla-speedtest.tgz'
+            ]
+            for c in cmds_tar:
+                rc, o, e = _ssh_exec(ssh, c)
+                log_lines.append(f'$ {c}\n{o}{e}'.strip())
+
+            # Verify
+            rc, out, err = _ssh_exec(ssh, 'command -v speedtest || command -v speedtest-cli || echo "NO"')
+            if 'NO' not in out:
+                rcv, ov, ev = _ssh_exec(ssh, 'speedtest --version 2>&1 || true')
+                ver_info = (ov + ev).strip()
+                if '1.2.0' in ver_info:
+                    log_lines.append('Installed Ookla speedtest via tarball (1.2.0): ' + out.strip())
+                    return {'ok': True, 'log': '\n'.join(log_lines)}
+                else:
+                    log_lines.append('Tarball install finished but version check did not return 1.2.0; continuing fallbacks.')
+
+            # Repo install fallbacks
+            cmds_deb = [
+                'which sudo || true',
+                'export DEBIAN_FRONTEND=noninteractive',
+                'curl -fsSL https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | bash',
+                'apt-get update -y || true',
+                'apt-get install -y speedtest || true'
+            ]
+            cmds_rpm = [
+                'curl -fsSL https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh | bash',
+                'yum -y install speedtest || dnf -y install speedtest || true'
+            ]
+            if 'debian' in os_release or 'ubuntu' in os_release:
+                for c in cmds_deb:
+                    rc, o, e = _ssh_exec(ssh, c)
+                    log_lines.append(f'$ {c}\n{o}{e}'.strip())
+            elif any(x in os_release for x in ['centos', 'rhel', 'fedora', 'almalinux', 'rocky']):
+                for c in cmds_rpm:
+                    rc, o, e = _ssh_exec(ssh, c)
+                    log_lines.append(f'$ {c}\n{o}{e}'.strip())
+
+            rc, out, err = _ssh_exec(ssh, 'command -v speedtest || command -v speedtest-cli || echo "NO"')
+            if 'speedtest' in out or 'speedtest-cli' in out:
+                log_lines.append('Installed speedtest successfully: ' + out.strip())
+                rc2, o2, e2 = _ssh_exec(ssh, 'speedtest --accept-license --accept-gdpr --version || true')
+                if o2 or e2:
+                    log_lines.append(('$ speedtest --accept-license --accept-gdpr --version\n' + (o2 + e2)).strip())
+                return {'ok': True, 'log': '\n'.join(log_lines)}
+
+            # Pip fallback
+            pip_try = [
+                'command -v python3 || command -v python || echo NO',
+                'command -v pip3 || command -v pip || (apt-get update -y && apt-get install -y python3-pip) || (yum -y install python3-pip || dnf -y install python3-pip) || true',
+                'pip3 install --upgrade pip || true',
+                'pip3 install speedtest-cli || pip install speedtest-cli || true',
+                'command -v speedtest-cli || (which python3 && python3 -m pip show speedtest-cli && ln -sf $(python3 -c "import shutil,sys; import os; print(shutil.which(\"speedtest-cli\") or \"/usr/local/bin/speedtest-cli\")") /usr/local/bin/speedtest-cli) || true'
+            ]
+            for c in pip_try:
+                rc, o, e = _ssh_exec(ssh, c)
+                log_lines.append(f'$ {c}\n{o}{e}'.strip())
+
+            rc, out, err = _ssh_exec(ssh, 'command -v speedtest || command -v speedtest-cli || echo "NO"')
+            if 'NO' not in out:
+                log_lines.append('Installed speedtest-cli via pip: ' + out.strip())
+                return {'ok': True, 'log': '\n'.join(log_lines)}
+
+            return {'ok': False, 'log': 'Failed to install speedtest using available methods.\n' + '\n'.join(log_lines)}
+        finally:
+            try:
+                ssh.close()
+            except Exception:
+                pass
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _install)

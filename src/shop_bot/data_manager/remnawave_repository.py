@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import sqlite3
 from datetime import datetime
 from typing import Any
@@ -294,6 +294,12 @@ _LEGACY_FORWARDERS = (
     "update_ticket_subject",
     "update_ticket_thread_info",
     "update_user_stats",
+    # SSH targets (speedtest-only, separate from hosts)
+    "get_all_ssh_targets",
+    "get_ssh_target",
+    "create_ssh_target",
+    "update_ssh_target_fields",
+    "delete_ssh_target",
 )
 
 for _name in _LEGACY_FORWARDERS:

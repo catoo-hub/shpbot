@@ -39,6 +39,8 @@ from shop_bot.data_manager.remnawave_repository import (
     update_host_url, update_host_name, update_host_ssh_settings, get_latest_speedtest, get_speedtests,
     get_all_keys, get_keys_for_user, delete_key_by_id, update_key_comment,
     get_balance, adjust_user_balance, get_referrals_for_user,
+    # SSH targets for speedtests
+    get_all_ssh_targets, get_ssh_target, create_ssh_target, update_ssh_target_fields, delete_ssh_target,
     get_user
 )
 from shop_bot.data_manager.database import update_host_remnawave_settings
@@ -1075,6 +1077,11 @@ def create_webhook_app(bot_controller_instance):
                 host['latest_speedtest'] = get_latest_speedtest(host['host_name'])
             except Exception:
                 host['latest_speedtest'] = None
+        # SSH-цели для спидтестов (отдельно от хостов)
+        try:
+            ssh_targets = get_all_ssh_targets()
+        except Exception:
+            ssh_targets = []
         
         # Список доступных бэкапов на сервере (zip)
         backups = []
@@ -1095,7 +1102,102 @@ def create_webhook_app(bot_controller_instance):
             backups = []
 
         common_data = get_common_template_data()
-        return render_template('settings.html', settings=current_settings, hosts=hosts, backups=backups, **common_data)
+        return render_template('settings.html', settings=current_settings, hosts=hosts, ssh_targets=ssh_targets, backups=backups, **common_data)
+
+    # --- SSH Targets (Speedtest) Management ---
+    @flask_app.route('/admin/ssh-targets/create', methods=['POST'])
+    @login_required
+    def create_ssh_target_route():
+        name = (request.form.get('target_name') or '').strip()
+        ssh_host = (request.form.get('ssh_host') or '').strip()
+        ssh_port = request.form.get('ssh_port')
+        ssh_user = (request.form.get('ssh_user') or '').strip() or None
+        ssh_password = request.form.get('ssh_password')  # allow empty to clear
+        ssh_key_path = (request.form.get('ssh_key_path') or '').strip() or None
+        description = (request.form.get('description') or '').strip() or None
+        try:
+            ssh_port_val = int(ssh_port) if ssh_port else 22
+        except Exception:
+            ssh_port_val = 22
+        if not name or not ssh_host:
+            flash('Укажите имя цели и SSH хост.', 'warning')
+            return redirect(url_for('settings_page', tab='hosts'))
+        ok = create_ssh_target(
+            target_name=name,
+            ssh_host=ssh_host,
+            ssh_port=ssh_port_val,
+            ssh_user=ssh_user,
+            ssh_password=ssh_password,
+            ssh_key_path=ssh_key_path,
+            description=description,
+        )
+        flash('SSH-цель добавлена.' if ok else 'Не удалось добавить SSH-цель.', 'success' if ok else 'danger')
+        return redirect(url_for('settings_page', tab='hosts'))
+
+    @flask_app.route('/admin/ssh-targets/<target_name>/update', methods=['POST'])
+    @login_required
+    def update_ssh_target_route(target_name: str):
+        ssh_host = (request.form.get('ssh_host') or '').strip() if 'ssh_host' in request.form else None
+        ssh_port_raw = (request.form.get('ssh_port') or '').strip() if 'ssh_port' in request.form else None
+        ssh_user = (request.form.get('ssh_user') or '').strip() if 'ssh_user' in request.form else None
+        ssh_password = request.form.get('ssh_password') if 'ssh_password' in request.form else None
+        ssh_key_path = (request.form.get('ssh_key_path') or '').strip() if 'ssh_key_path' in request.form else None
+        description = (request.form.get('description') or '').strip() if 'description' in request.form else None
+        try:
+            ssh_port = int(ssh_port_raw) if ssh_port_raw else None
+        except Exception:
+            ssh_port = None
+        ok = update_ssh_target_fields(
+            target_name,
+            ssh_host=ssh_host,
+            ssh_port=ssh_port,
+            ssh_user=ssh_user,
+            ssh_password=ssh_password,
+            ssh_key_path=ssh_key_path,
+            description=description,
+        )
+        flash('SSH-цель обновлена.' if ok else 'Не удалось обновить SSH-цель.', 'success' if ok else 'danger')
+        return redirect(request.referrer or url_for('settings_page', tab='hosts'))
+
+    @flask_app.route('/admin/ssh-targets/<target_name>/delete', methods=['POST'])
+    @login_required
+    def delete_ssh_target_route(target_name: str):
+        ok = delete_ssh_target(target_name)
+        flash('SSH-цель удалена.' if ok else 'Не удалось удалить SSH-цель.', 'success' if ok else 'danger')
+        return redirect(url_for('settings_page', tab='hosts'))
+
+    @flask_app.route('/admin/ssh-targets/<target_name>/speedtest/run', methods=['POST'])
+    @login_required
+    def run_ssh_target_speedtest_route(target_name: str):
+        try:
+            res = asyncio.run(speedtest_runner.run_and_store_ssh_speedtest_for_target(target_name))
+        except Exception as e:
+            res = {'ok': False, 'error': str(e)}
+        wants_json = 'application/json' in (request.headers.get('Accept') or '') or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        if wants_json:
+            return jsonify(res)
+        flash(('Тест выполнен.' if res and res.get('ok') else f"Ошибка теста: {res.get('error') if res else 'unknown'}"), 'success' if res and res.get('ok') else 'danger')
+        return redirect(request.referrer or url_for('settings_page', tab='hosts'))
+
+    @flask_app.route('/admin/ssh-targets/<target_name>/speedtest/install', methods=['POST'])
+    @login_required
+    def auto_install_speedtest_on_target_route(target_name: str):
+        try:
+            res = asyncio.run(speedtest_runner.auto_install_speedtest_on_target(target_name))
+        except Exception as e:
+            res = {'ok': False, 'log': str(e)}
+        wants_json = 'application/json' in (request.headers.get('Accept') or '') or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        if wants_json:
+            return jsonify({"ok": bool(res.get('ok')), "log": res.get('log')})
+        flash(('Установка завершена успешно.' if res.get('ok') else 'Не удалось установить speedtest на цель.') , 'success' if res.get('ok') else 'danger')
+        try:
+            log = res.get('log') or ''
+            short = '\n'.join((log.splitlines() or [])[-20:])
+            if short:
+                flash(short, 'secondary')
+        except Exception:
+            pass
+        return redirect(request.referrer or url_for('settings_page', tab='hosts'))
 
     # --- DB Backup/Restore ---
     @flask_app.route('/admin/db/backup', methods=['POST'])
