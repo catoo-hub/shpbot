@@ -4,6 +4,7 @@ import time
 import uuid
 import re
 import html as html_escape
+import hashlib
 from datetime import datetime
 
 from aiogram import Bot, Router, F, types
@@ -68,6 +69,26 @@ def get_admin_router() -> Router:
             return f"<a href='tg://user?id={u.id}'>{safe_name}</a>"
         except Exception:
             return str(getattr(u, 'id', '—'))
+
+    # Helper: по хешу (sha1) найти имя SSH-цели
+    def _resolve_target_from_hash(cb_data: str) -> str | None:
+        try:
+            digest = cb_data.split(':', 1)[1]
+        except Exception:
+            return None
+        try:
+            targets = get_all_ssh_targets() or []
+        except Exception:
+            targets = []
+        for t in targets:
+            name = t.get('target_name')
+            try:
+                h = hashlib.sha1((name or '').encode('utf-8', 'ignore')).hexdigest()
+            except Exception:
+                h = hashlib.sha1(str(name).encode('utf-8', 'ignore')).hexdigest()
+            if h == digest:
+                return name
+        return None
 
     async def show_admin_menu(message: types.Message, edit_message: bool = False):
         # Собираем статистику для отображения прямо в админ-меню
@@ -213,6 +234,76 @@ def get_admin_router() -> Router:
             await callback.message.answer(text_res)
 
         # Разослать финал всем админам
+        for aid in admin_ids:
+            if wait_msg and aid == callback.from_user.id:
+                continue
+            try:
+                await callback.bot.send_message(aid, text_res)
+            except Exception:
+                pass
+
+    # --- Speedtest: запуск по SSH-цели (хешированный callback) ---
+    @admin_router.callback_query(F.data.startswith("stt:"))
+    async def admin_speedtest_run_target_hashed(callback: types.CallbackQuery):
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        await callback.answer()
+        target_name = _resolve_target_from_hash(callback.data)
+        if not target_name:
+            await callback.message.answer("❌ Цель не найдена")
+            return
+
+        # Оповещение администраторов о старте
+        try:
+            from shop_bot.data_manager.remnawave_repository import get_admin_ids
+            admin_ids = list({*(get_admin_ids() or []), int(callback.from_user.id)})
+        except Exception:
+            admin_ids = [int(callback.from_user.id)]
+        initiator = _format_user_mention(callback.from_user)
+        start_text = f"🚀 Запущен тест скорости (SSH-цель): <b>{target_name}</b>\n(инициатор: {initiator})"
+        for aid in admin_ids:
+            try:
+                await callback.bot.send_message(aid, start_text)
+            except Exception:
+                pass
+
+        # Локальный статус
+        try:
+            wait_msg = await callback.message.answer(f"⏳ Выполняю тест скорости для SSH-цели <b>{target_name}</b>…")
+        except Exception:
+            wait_msg = None
+
+        # Выполнить тест (только SSH) и сохранить в БД
+        try:
+            result = await speedtest_runner.run_and_store_ssh_speedtest_for_target(target_name)
+        except Exception as e:
+            result = {"ok": False, "error": str(e)}
+
+        if not result.get("ok"):
+            text_res = f"🏁 Тест скорости (SSH-цель) завершён для <b>{target_name}</b>\n❌ {result.get('error') or 'ошибка'}"
+        else:
+            ping = result.get('ping_ms')
+            down = result.get('download_mbps')
+            up = result.get('upload_mbps')
+            srv = result.get('server_name') or '—'
+            text_res = (
+                f"🏁 Тест скорости (SSH-цель) завершён для <b>{target_name}</b>\n\n"
+                f"<b>SSH:</b> ✅\n"
+                f"• ping: {ping if ping is not None else '—'} ms\n"
+                f"• ↓ {down if down is not None else '—'} Mbps\n"
+                f"• ↑ {up if up is not None else '—'} Mbps\n"
+                f"• сервер: {srv}"
+            )
+
+        if wait_msg:
+            try:
+                await wait_msg.edit_text(text_res)
+            except Exception:
+                await callback.message.answer(text_res)
+        else:
+            await callback.message.answer(text_res)
+
         for aid in admin_ids:
             if wait_msg and aid == callback.from_user.id:
                 continue
@@ -462,7 +553,37 @@ def get_admin_router() -> Router:
         await callback.answer()
         target_name = callback.data.replace("admin_speedtest_autoinstall_target_", "", 1)
         try:
-            wait = await callback.message.answer(f"🛠 Пытаюсь установить speedtest на SSH-цели <b>{target_name}\</b>…")
+            wait = await callback.message.answer(f"🛠 Пытаюсь установить speedtest на SSH-цели <b>{target_name}</b>…")
+        except Exception:
+            wait = None
+        from shop_bot.data_manager.speedtest_runner import auto_install_speedtest_on_target
+        try:
+            res = await auto_install_speedtest_on_target(target_name)
+        except Exception as e:
+            res = {"ok": False, "log": f"Ошибка: {e}"}
+        text = ("✅ Автоустановка завершена успешно" if res.get("ok") else "❌ Автоустановка завершилась с ошибкой")
+        text += f"\n<pre>{(res.get('log') or '')[:3500]}</pre>"
+        if wait:
+            try:
+                await wait.edit_text(text)
+            except Exception:
+                await callback.message.answer(text)
+        else:
+            await callback.message.answer(text)
+
+    # --- Speedtest: Автоустановка на SSH-цели (хешированный callback) ---
+    @admin_router.callback_query(F.data.startswith("stti:"))
+    async def admin_speedtest_autoinstall_target_hashed(callback: types.CallbackQuery):
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        await callback.answer()
+        target_name = _resolve_target_from_hash(callback.data)
+        if not target_name:
+            await callback.message.answer("❌ Цель не найдена")
+            return
+        try:
+            wait = await callback.message.answer(f"🛠 Пытаюсь установить speedtest на SSH-цели <b>{target_name}</b>…")
         except Exception:
             wait = None
         from shop_bot.data_manager.speedtest_runner import auto_install_speedtest_on_target

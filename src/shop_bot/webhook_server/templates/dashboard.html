@@ -61,7 +61,7 @@
             <input type="hidden" name="method" value="both" />
             <button type="submit" class="btn btn-primary btn-xs pill">Проверить выбранный</button>
           </form>
-          <form id="st-run-all-form" action="{{ url_for('run_all_speedtests_route') }}" method="post" class="m-0">
+          <form id="st-run-all-form" action="{{ url_for('run_all_speedtests_route') }}" data-target-all-url="{{ url_for('run_all_ssh_target_speedtests_route') }}" method="post" class="m-0">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
             <button type="submit" class="btn btn-outline-secondary btn-xs pill">Запустить для всех</button>
           </form>
@@ -313,8 +313,10 @@
         }
         // chart
         const labels = items.map(it => it.created_at);
-        const series = items.map(it => Number(it.download_mbps || 0));
-        const seriesUp = items.map(it => Number(it.upload_mbps || 0));
+        const series = items.map(it => parseFloat(String(it.download_mbps ?? '0')) || 0);
+        const seriesUp = items.map(it => parseFloat(String(it.upload_mbps ?? '0')) || 0);
+        const pr = items.length <= 2 ? 3 : 0;
+        const tn = items.length <= 2 ? 0 : 0.3;
         const ctx = topCanvas.getContext('2d');
         if (topChart) topChart.destroy();
         topChart = new Chart(ctx, {
@@ -323,12 +325,12 @@
             {
               label: 'Download Mbps', data: series,
               borderColor: '#206bc4', backgroundColor: 'rgba(32,107,196,0.08)',
-              borderWidth: 2, fill: true, tension: 0.3, pointRadius: 0
+              borderWidth: 2, fill: true, tension: tn, pointRadius: pr
             },
             {
               label: 'Upload Mbps', data: seriesUp,
               borderColor: '#2fb344', backgroundColor: 'rgba(47,179,68,0.08)',
-              borderWidth: 2, fill: false, tension: 0.3, pointRadius: 0
+              borderWidth: 2, fill: false, tension: tn, pointRadius: pr
             }
           ]},
           options: {
@@ -384,12 +386,12 @@
     if (runAllForm) {
       runAllForm.addEventListener('submit', async (ev) => {
         ev.preventDefault();
-        // Кнопка "для всех" актуальна только для Хостов
-        if (modeTarget && modeTarget.checked) { return; }
         const fd = new FormData(runAllForm);
         try {
           showRunning();
-          const resp = await fetch(runAllForm.action, { method: 'POST', body: fd, credentials: 'same-origin' });
+          const isTarget = modeTarget && modeTarget.checked;
+          const url = isTarget ? (runAllForm.dataset.targetAllUrl || '#') : runAllForm.action;
+          const resp = await fetch(url, { method: 'POST', body: fd, credentials: 'same-origin' });
           setTimeout(async ()=>{ await loadAndDrawTop(); hideRunning(); }, 1200);
         } catch(_){}
       });

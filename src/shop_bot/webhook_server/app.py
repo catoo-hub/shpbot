@@ -747,11 +747,66 @@ def create_webhook_app(bot_controller_instance):
         flash('SSH-параметры обновлены.' if ok else 'Не удалось обновить SSH-параметры.', 'success' if ok else 'danger')
         return redirect(request.referrer or url_for('settings_page'))
 
+    # --- SSH Target speedtest: run single ---
+    @flask_app.route('/admin/ssh-targets/<target_name>/speedtest/run', methods=['POST'])
+    @login_required
+    def run_ssh_target_speedtest_route(target_name: str):
+        logger.info(f"WebPanel: Speedtest started for ssh_target='{target_name}'")
+        try:
+            res = asyncio.run(speedtest_runner.run_and_store_ssh_speedtest_for_target(target_name))
+        except Exception as e:
+            res = {"ok": False, "error": str(e)}
+        if res and res.get('ok'):
+            logger.info(f"WebPanel: Speedtest finished OK for ssh_target='{target_name}'")
+        else:
+            logger.warning(f"WebPanel: Speedtest finished FAIL for ssh_target='{target_name}': {res.get('error') if res else 'unknown'}")
+        wants_json = 'application/json' in (request.headers.get('Accept') or '') or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        if wants_json:
+            return jsonify(res)
+        flash(('Тест выполнен.' if res and res.get('ok') else f"Ошибка теста: {res.get('error') if res else 'unknown'}"), 'success' if res and res.get('ok') else 'danger')
+        return redirect(request.referrer or url_for('settings_page', tab='hosts'))
+
+    # --- SSH Target speedtest: run all ---
+    @flask_app.route('/admin/ssh-targets/speedtests/run-all', methods=['POST'])
+    @login_required
+    def run_all_ssh_target_speedtests_route():
+        logger.info("WebPanel: Speedtest RUN-ALL for ssh_targets started")
+        try:
+            targets = get_all_ssh_targets()
+        except Exception:
+            targets = []
+        errors = []
+        ok_count = 0
+        total = 0
+        for t in targets or []:
+            name = (t.get('target_name') or '').strip()
+            if not name:
+                continue
+            total += 1
+            try:
+                res = asyncio.run(speedtest_runner.run_and_store_ssh_speedtest_for_target(name))
+                if res and res.get('ok'):
+                    ok_count += 1
+                else:
+                    errors.append(f"{name}: {res.get('error') if res else 'unknown'}")
+            except Exception as e:
+                errors.append(f"{name}: {e}")
+        logger.info(f"WebPanel: Speedtest RUN-ALL ssh_targets finished: ok={ok_count}, total={total}")
+        wants_json = 'application/json' in (request.headers.get('Accept') or '') or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        if wants_json:
+            return jsonify({"ok": len(errors) == 0, "done": ok_count, "total": total, "errors": errors})
+        if errors:
+            flash(f"SSH цели: выполнено {ok_count}/{total}. Ошибки: {'; '.join(errors[:3])}{'…' if len(errors) > 3 else ''}", 'warning')
+        else:
+            flash(f"SSH цели: тесты скорости выполнены для всех ({ok_count}/{total})", 'success')
+        return redirect(request.referrer or url_for('dashboard_page'))
+
     # --- Host speedtest run & fetch ---
     @flask_app.route('/admin/hosts/<host_name>/speedtest/run', methods=['POST'])
     @login_required
     def run_host_speedtest_route(host_name: str):
         method = (request.form.get('method') or '').strip().lower()
+        logger.info(f"WebPanel: Speedtest started for host='{host_name}', method='{method or 'both'}'")
         try:
             if method == 'ssh':
                 res = asyncio.run(speedtest_runner.run_and_store_ssh_speedtest(host_name))
@@ -762,6 +817,10 @@ def create_webhook_app(bot_controller_instance):
                 res = asyncio.run(speedtest_runner.run_both_for_host(host_name))
         except Exception as e:
             res = {'ok': False, 'error': str(e)}
+        if res and res.get('ok'):
+            logger.info(f"WebPanel: Speedtest finished OK for host='{host_name}'")
+        else:
+            logger.warning(f"WebPanel: Speedtest finished FAIL for host='{host_name}': {res.get('error') if res else 'unknown'}")
         wants_json = 'application/json' in (request.headers.get('Accept') or '') or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
         if wants_json:
             return jsonify(res)
@@ -788,6 +847,7 @@ def create_webhook_app(bot_controller_instance):
     @login_required
     def run_all_speedtests_route():
         # Запустить тесты для всех хостов (оба варианта)
+        logger.info("WebPanel: Speedtest RUN-ALL for hosts started")
         try:
             hosts = get_all_hosts()
         except Exception:
@@ -806,6 +866,7 @@ def create_webhook_app(bot_controller_instance):
                     errors.append(f"{name}: {res.get('error') if res else 'unknown'}")
             except Exception as e:
                 errors.append(f"{name}: {e}")
+        logger.info(f"WebPanel: Speedtest RUN-ALL hosts finished: ok={ok_count}, total={len(hosts)}")
 
         wants_json = 'application/json' in (request.headers.get('Accept') or '') or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
         if wants_json:
@@ -1170,18 +1231,7 @@ def create_webhook_app(bot_controller_instance):
         flash('SSH-цель удалена.' if ok else 'Не удалось удалить SSH-цель.', 'success' if ok else 'danger')
         return redirect(url_for('settings_page', tab='hosts'))
 
-    @flask_app.route('/admin/ssh-targets/<target_name>/speedtest/run', methods=['POST'])
-    @login_required
-    def run_ssh_target_speedtest_route(target_name: str):
-        try:
-            res = asyncio.run(speedtest_runner.run_and_store_ssh_speedtest_for_target(target_name))
-        except Exception as e:
-            res = {'ok': False, 'error': str(e)}
-        wants_json = 'application/json' in (request.headers.get('Accept') or '') or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
-        if wants_json:
-            return jsonify(res)
-        flash(('Тест выполнен.' if res and res.get('ok') else f"Ошибка теста: {res.get('error') if res else 'unknown'}"), 'success' if res and res.get('ok') else 'danger')
-        return redirect(request.referrer or url_for('settings_page', tab='hosts'))
+    
 
     @flask_app.route('/admin/ssh-targets/<target_name>/speedtest/install', methods=['POST'])
     @login_required

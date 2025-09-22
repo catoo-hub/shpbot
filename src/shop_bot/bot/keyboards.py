@@ -1,4 +1,5 @@
 import logging
+import hashlib
 
 from datetime import datetime
 
@@ -485,8 +486,13 @@ def create_admin_ssh_targets_keyboard(ssh_targets: list[dict]) -> InlineKeyboard
         for t in ssh_targets:
             name = t.get('target_name')
             # две кнопки в ряд: тест и автоустановка
-            builder.button(text=name, callback_data=f"admin_speedtest_pick_target_{name}")
-            builder.button(text="🛠 Автоустановка", callback_data=f"admin_speedtest_autoinstall_target_{name}")
+            try:
+                digest = hashlib.sha1((name or '').encode('utf-8', 'ignore')).hexdigest()
+            except Exception:
+                digest = hashlib.sha1(str(name).encode('utf-8', 'ignore')).hexdigest()
+            # короткие префиксы, чтобы уложиться в лимит 64 байта
+            builder.button(text=name, callback_data=f"stt:{digest}")
+            builder.button(text="🛠 Автоустановка", callback_data=f"stti:{digest}")
     else:
         builder.button(text="SSH-целей нет", callback_data="noop")
     builder.button(text="⬅️ К хостам", callback_data="admin_speedtest")
