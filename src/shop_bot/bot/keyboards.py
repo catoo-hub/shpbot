@@ -26,11 +26,13 @@ def create_main_menu_keyboard(user_keys: list, trial_available: bool, is_admin: 
     builder.button(text="🤝 Реферальная программа", callback_data="show_referral_program")
     builder.button(text="🆘 Поддержка", callback_data="show_help")
     builder.button(text="ℹ️ О проекте", callback_data="show_about")
+    # Просмотр результатов последнего спидтеста по SSH-целям
+    builder.button(text="⚡ Скорость", callback_data="user_speedtest_last")
     builder.button(text="❓ Как использовать", callback_data="howto_vless")
     if is_admin:
         builder.button(text="⚙️ Админка", callback_data="admin_menu")
-
-    layout = [1 if trial_available and get_setting("trial_enabled") == "true" else 0, 2, 1, 2, 1, 1 if is_admin else 0]
+    # Разкладка: trial (1), профиль+ключи (2), реферал (1), поддержка+о проекте (2), скорость+как использовать (2), админка (1)
+    layout = [1 if trial_available and get_setting("trial_enabled") == "true" else 0, 2, 1, 2, 2, 1 if is_admin else 0]
     actual_layout = [size for size in layout if size > 0]
     builder.adjust(*actual_layout)
     

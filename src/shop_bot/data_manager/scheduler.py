@@ -20,7 +20,8 @@ notified_users = {}
 
 logger = logging.getLogger(__name__)
 
-# Запуск обоих видов измерений 3 раза в сутки (каждые 8 часов)
+# Запуск измерений скорости 3 раза в сутки (каждые 8 часов)
+# Запускаем ТОЛЬКО для SSH-целей.
 SPEEDTEST_INTERVAL_SECONDS = 8 * 3600
 _last_speedtests_run_at: datetime | None = None
 _last_backup_run_at: datetime | None = None
@@ -323,7 +324,6 @@ async def _maybe_run_periodic_speedtests():
     if _last_speedtests_run_at and (now - _last_speedtests_run_at).total_seconds() < SPEEDTEST_INTERVAL_SECONDS:
         return
     try:
-        await _run_speedtests_for_all_hosts()
         await _run_speedtests_for_all_ssh_targets()
         _last_speedtests_run_at = now
     except Exception as e:

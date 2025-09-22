@@ -592,6 +592,47 @@ def get_user_router() -> Router:
             disable_web_page_preview=True
         )
 
+    # --- User: Просмотр последних результатов Speedtest (SSH-цели) ---
+    @user_router.callback_query(F.data == "user_speedtest_last")
+    @registration_required
+    async def user_speedtest_last_handler(callback: types.CallbackQuery):
+        await callback.answer()
+        try:
+            targets = rw_repo.get_all_ssh_targets() or []
+        except Exception:
+            targets = []
+        lines = []
+        for t in targets:
+            name = (t.get('target_name') or '').strip()
+            if not name:
+                continue
+            try:
+                last = rw_repo.get_latest_speedtest(name)
+            except Exception:
+                last = None
+            if not last:
+                lines.append(f"• <b>{name}</b>: данных нет")
+                continue
+            ping = last.get('ping_ms')
+            down = last.get('download_mbps')
+            up = last.get('upload_mbps')
+            srv = last.get('server_name') or '—'
+            ts = last.get('created_at') or ''
+            ok_badge = '✅' if last.get('ok') else '❌'
+            lines.append(
+                f"• <b>{name}</b> — SSH: {ok_badge} · ⏱ {ping if ping is not None else '—'} ms · ↓ {down if down is not None else '—'} Mbps · ↑ {up if up is not None else '—'} Mbps · 📍 {srv} · {ts}"
+            )
+        text = (
+            "⚡ <b>Последние результаты Speedtest</b>\n"
+            + ("\n".join(lines) if lines else "(цели не настроены)")
+        )
+        kb = InlineKeyboardBuilder()
+        kb.button(text="⬅️ В меню", callback_data="back_to_main_menu")
+        try:
+            await callback.message.edit_text(text, reply_markup=kb.as_markup())
+        except Exception:
+            await callback.message.answer(text, reply_markup=kb.as_markup())
+
     @user_router.callback_query(F.data == "show_help")
     @registration_required
     async def about_handler(callback: types.CallbackQuery):
