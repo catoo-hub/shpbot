@@ -1423,44 +1423,6 @@ def get_admin_router() -> Router:
             await message.answer("❌ Не удалось обновить email (возможно, уже занят)")
         await state.clear()
 
-    class AdminEditKeyHost(StatesGroup):
-        waiting_for_host = State()
-
-    @admin_router.callback_query(F.data.startswith("admin_key_edit_host_"))
-    async def admin_key_edit_host_start(callback: types.CallbackQuery, state: FSMContext):
-        if not is_admin(callback.from_user.id):
-            await callback.answer("У вас нет прав.", show_alert=True)
-            return
-        await callback.answer()
-        try:
-            key_id = int(callback.data.split("_")[-1])
-        except Exception:
-            await callback.message.answer("❌ Неверный формат key_id")
-            return
-        await state.update_data(edit_key_id=key_id)
-        await state.set_state(AdminEditKeyHost.waiting_for_host)
-        await callback.message.edit_text(
-            f"Введите новое имя сервера (host) для ключа #{key_id}",
-            reply_markup=keyboards.create_admin_cancel_keyboard()
-        )
-
-    @admin_router.message(AdminEditKeyHost.waiting_for_host)
-    async def admin_key_edit_host_commit(message: types.Message, state: FSMContext):
-        if not is_admin(message.from_user.id):
-            return
-        data = await state.get_data()
-        key_id = int(data.get('edit_key_id'))
-        new_host = (message.text or '').strip()
-        if not new_host:
-            await message.answer("❌ Введите корректное имя сервера")
-            return
-        ok = rw_repo.update_key(key_id, host_name=new_host)
-        if ok:
-            await message.answer("✅ Сервер обновлён")
-        else:
-            await message.answer("❌ Не удалось обновить сервер")
-        await state.clear()
-
     # --- Начисление реф. баланса: удалено ---
 
     # --- Выдача подарочного ключа ---
