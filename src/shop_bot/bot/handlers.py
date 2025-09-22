@@ -620,9 +620,18 @@ def get_user_router() -> Router:
             ping_s = f"{float(ping):.2f}" if isinstance(ping, (int, float)) else '—'
             down_s = f"{float(down):.0f}" if isinstance(down, (int, float)) else '—'
             up_s = f"{float(up):.0f}" if isinstance(up, (int, float)) else '—'
-            # Красивый и короткий вывод: только задержка и скорости
+            ts_raw = last.get('created_at') or ''
+            ts_s = ''
+            if ts_raw:
+                try:
+                    dt = datetime.fromisoformat(str(ts_raw).replace('Z', '+00:00'))
+                    # Только день и время (без года), например: 22.09 14:35
+                    ts_s = dt.strftime('%d.%m %H:%M')
+                except Exception:
+                    ts_s = str(ts_raw)
+            # Красивый и короткий вывод: только задержка, скорости и время
             lines.append(
-                f"• <b>{name}</b> — SSH: {ok_badge} · ⏱ {ping_s} ms · ↓ {down_s} · ↑ {up_s} Mbps"
+                f"• <b>{name}</b> — SSH: {ok_badge} · ⏱ {ping_s} ms · ↓ {down_s} Mbps · ↑ {up_s} Mbps · 🕒 {ts_s}"
             )
         text = (
             "⚡ <b>Последние результаты Speedtest</b>\n"
