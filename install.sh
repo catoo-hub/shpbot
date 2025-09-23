@@ -134,6 +134,53 @@ ensure_services() {
     done
 }
 
+ensure_certbot_nginx() {
+    log_info "\nПроверка плагина Certbot для Nginx"
+
+    local has_nginx_plugin=0
+    if command -v certbot >/dev/null 2>&1; then
+        if certbot plugins 2>/dev/null | grep -qi 'nginx'; then
+            has_nginx_plugin=1
+        fi
+    fi
+
+    if [[ $has_nginx_plugin -eq 1 ]]; then
+        log_success "✔ Плагин nginx для Certbot найден."
+        return
+    fi
+
+    if command -v apt-get >/dev/null 2>&1; then
+        log_info "Устанавливаю плагин python3-certbot-nginx (apt)..."
+        sudo apt-get update
+        if sudo apt-get install -y python3-certbot-nginx; then
+            if certbot plugins 2>/dev/null | grep -qi 'nginx'; then
+                log_success "✔ Плагин nginx для Certbot установлен (apt)."
+                return
+            fi
+        else
+            log_warn "Не удалось установить python3-certbot-nginx через apt."
+        fi
+    fi
+
+    log_warn "Пробую установить Certbot (snap) с поддержкой nginx."
+    if ! command -v snap >/dev/null 2>&1; then
+        sudo apt-get update
+        sudo apt-get install -y snapd
+    fi
+    sudo snap install core || true
+    sudo snap refresh core || true
+    sudo snap install --classic certbot
+    sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+
+    if certbot plugins 2>/dev/null | grep -qi 'nginx'; then
+        log_success "✔ Плагин nginx для Certbot доступен (snap)."
+        return
+    fi
+
+    log_error "Плагин nginx для Certbot недоступен. Невозможно продолжить выпуск сертификата с параметром --nginx."
+    exit 1
+}
+
 configure_nginx() {
     local domain="$1"
     local port="$2"
@@ -199,6 +246,7 @@ log_info "\nСуществующая конфигурация не найден�
 
 ensure_packages
 ensure_services
+ensure_certbot_nginx
 
 log_info "\nШаг 2: клонирование репозитория"
 if [[ ! -d "$PROJECT_DIR/.git" ]]; then
