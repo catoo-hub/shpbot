@@ -505,20 +505,55 @@ def create_admin_ssh_targets_keyboard(ssh_targets: list[dict]) -> InlineKeyboard
     builder.adjust(*rows)
     return builder.as_markup()
 
-def create_admin_keys_for_host_keyboard(host_name: str, keys: list[dict]) -> InlineKeyboardMarkup:
+def create_admin_keys_for_host_keyboard(
+    host_name: str,
+    keys: list[dict],
+    page: int = 0,
+    page_size: int = 10,
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    if keys:
-        for k in keys:
-            kid = k.get('key_id')
-            email = k.get('key_email') or '—'
-            expiry = k.get('expiry_date') or '—'
-            title = f"#{kid} • {email[:24]} • до {expiry}"
-            builder.button(text=title, callback_data=f"admin_edit_key_{kid}")
-    else:
+    total = len(keys or [])
+    if not keys:
         builder.button(text="Ключей на хосте нет", callback_data="noop")
+        builder.button(text="⬅️ К выбору хоста", callback_data="admin_hostkeys_back_to_hosts")
+        builder.button(text="⬅️ В админ-меню", callback_data="admin_menu")
+        builder.adjust(1)
+        return builder.as_markup()
+
+    start = max(page, 0) * page_size
+    end = start + page_size
+    page_items = keys[start:end]
+
+    for k in page_items:
+        kid = k.get('key_id')
+        email = (k.get('key_email') or '—')
+        expiry_raw = k.get('expiry_date') or '—'
+        # Сократим отображаемую дату, чтобы уменьшить общий размер разметки
+        try:
+            dt = datetime.fromisoformat(str(expiry_raw))
+            expiry = dt.strftime('%d.%m.%Y')
+        except Exception:
+            expiry = str(expiry_raw)[:10]
+        # Укороченный заголовок кнопки
+        title = f"#{kid} • {email[:18]} • {expiry}"
+        builder.button(text=title, callback_data=f"admin_edit_key_{kid}")
+
+    have_prev = start > 0
+    have_next = end < total
+    if have_prev:
+        builder.button(text="⬅️ Назад", callback_data=f"admin_hostkeys_page_{page-1}")
+    if have_next:
+        builder.button(text="Вперёд ➡️", callback_data=f"admin_hostkeys_page_{page+1}")
+
     builder.button(text="⬅️ К выбору хоста", callback_data="admin_hostkeys_back_to_hosts")
     builder.button(text="⬅️ В админ-меню", callback_data="admin_menu")
-    builder.adjust(1)
+
+    rows = [1] * len(page_items)
+    tail = []
+    if have_prev or have_next:
+        tail.append(2 if (have_prev and have_next) else 1)
+    tail.append(2)  # К выбору хоста + в админ-меню
+    builder.adjust(*(rows + tail if rows else tail))
     return builder.as_markup()
 
 def create_admin_months_pick_keyboard(action: str = "gift") -> InlineKeyboardMarkup:

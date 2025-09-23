@@ -1941,6 +1941,32 @@ def get_admin_router() -> Router:
             reply_markup=keyboards.create_admin_keys_for_host_keyboard(host_name, keys)
         )
 
+    @admin_router.callback_query(AdminHostKeys.picking_host, F.data.startswith("admin_hostkeys_page_"))
+    async def admin_hostkeys_page(callback: types.CallbackQuery, state: FSMContext):
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        await callback.answer()
+        try:
+            page = int(callback.data.split("_")[-1])
+        except Exception:
+            page = 0
+        data = await state.get_data()
+        host_name = data.get('hostkeys_host')
+        if not host_name:
+            # Если контекст хоста потерян — покажем список хостов
+            hosts = get_all_hosts()
+            await callback.message.edit_text(
+                "🌍 Выберите хост для просмотра ключей:",
+                reply_markup=keyboards.create_admin_hosts_pick_keyboard(hosts, action="hostkeys")
+            )
+            return
+        keys = get_keys_for_host(host_name)
+        await callback.message.edit_text(
+            f"🔑 Ключи на хосте {host_name}:",
+            reply_markup=keyboards.create_admin_keys_for_host_keyboard(host_name, keys, page=page)
+        )
+
     @admin_router.callback_query(AdminHostKeys.picking_host, F.data == "admin_hostkeys_back_to_hosts")
     async def admin_hostkeys_back_to_hosts(callback: types.CallbackQuery, state: FSMContext):
         if not is_admin(callback.from_user.id):
