@@ -1902,62 +1902,68 @@ async def process_successful_payment(bot: Bot, metadata: dict):
                 await processing_message.edit_text("❌ Не удалось обновить информацию о ключе. Попробуйте позже.")
                 return
 
-            user_data = get_user(user_id)
-            referrer_id = user_data.get('referred_by')
-
-            # Начисляем реферальное вознаграждение по покупке — зависит от типа системы
-            if referrer_id:
-                try:
-                    referrer_id = int(referrer_id)
-                except Exception:
-                    logger.warning(f"Referral: invalid referrer_id={referrer_id} for user {user_id}")
-                    referrer_id = None
-            if referrer_id:
-                # Выбор логики по типу: процент, фикс за покупку; для fixed_start_referrer — вознаграждение по покупке не начисляем
-                try:
-                    reward_type = (get_setting("referral_reward_type") or "percent_purchase").strip()
-                except Exception:
-                    reward_type = "percent_purchase"
-                reward = Decimal("0")
-                if reward_type == "fixed_start_referrer":
+        # Начисляем реферальное вознаграждение по покупке — для любых внешних оплат (new и extend), кроме оплат с внутреннего баланса
+        try:
+            pm_for_ref = (payment_method or '').strip().lower()
+            if pm_for_ref == 'balance':
+                logger.info(f"Referral: skip accrual for user {user_id} because payment was made from internal balance.")
+            else:
+                user_data = get_user(user_id) or {}
+                referrer_id = user_data.get('referred_by')
+                if referrer_id:
+                    try:
+                        referrer_id = int(referrer_id)
+                    except Exception:
+                        logger.warning(f"Referral: invalid referrer_id={referrer_id} for user {user_id}")
+                        referrer_id = None
+                if referrer_id:
+                    # Выбор логики по типу: процент от покупки, фикс за покупку; для fixed_start_referrer — вознаграждение по покупкам не начисляем
+                    try:
+                        reward_type = (get_setting("referral_reward_type") or "percent_purchase").strip()
+                    except Exception:
+                        reward_type = "percent_purchase"
                     reward = Decimal("0")
-                elif reward_type == "fixed_purchase":
-                    try:
-                        amount_raw = get_setting("fixed_referral_bonus_amount") or "50"
-                        reward = Decimal(str(amount_raw)).quantize(Decimal("0.01"))
-                    except Exception:
-                        reward = Decimal("50.00")
-                else:
-                    # percent_purchase (по умолчанию)
-                    try:
-                        percentage = Decimal(get_setting("referral_percentage") or "0")
-                    except Exception:
-                        percentage = Decimal("0")
-                    reward = (Decimal(str(price)) * percentage / 100).quantize(Decimal("0.01"))
-                logger.info(f"Referral: user={user_id}, referrer={referrer_id}, type={reward_type}, reward={float(reward):.2f}")
-                if float(reward) > 0:
-                    try:
-                        ok = add_to_balance(referrer_id, float(reward))
-                    except Exception as e:
-                        logger.warning(f"Referral: add_to_balance failed for referrer {referrer_id}: {e}")
-                        ok = False
-                    try:
-                        add_to_referral_balance_all(referrer_id, float(reward))
-                    except Exception as e:
-                        logger.warning(f"Failed to increment referral_balance_all for {referrer_id}: {e}")
-                    referrer_username = user_data.get('username', 'пользователь')
-                    if ok:
+                    if reward_type == "fixed_start_referrer":
+                        reward = Decimal("0")
+                    elif reward_type == "fixed_purchase":
                         try:
-                            await bot.send_message(
-                                chat_id=referrer_id,
-                                text=(
-                                    "💰 Вам начислено реферальное вознаграждение!\n"
-                                    f"Пользователь: {referrer_username} (ID: {user_id})\n"
-                                    f"Сумма: {float(reward):.2f} RUB"
-                                )
-                            )
+                            amount_raw = get_setting("fixed_referral_bonus_amount") or "50"
+                            reward = Decimal(str(amount_raw)).quantize(Decimal("0.01"))
+                        except Exception:
+                            reward = Decimal("50.00")
+                    else:
+                        # percent_purchase (по умолчанию)
+                        try:
+                            percentage = Decimal(get_setting("referral_percentage") or "0")
+                        except Exception:
+                            percentage = Decimal("0")
+                        reward = (Decimal(str(price)) * percentage / 100).quantize(Decimal("0.01"))
+                    logger.info(f"Referral: user={user_id}, referrer={referrer_id}, type={reward_type}, reward={float(reward):.2f}")
+                    if float(reward) > 0:
+                        try:
+                            ok = add_to_balance(referrer_id, float(reward))
                         except Exception as e:
-                            logger.warning(f"Could not send referral reward notification to {referrer_id}: {e}")
+                            logger.warning(f"Referral: add_to_balance failed for referrer {referrer_id}: {e}")
+                            ok = False
+                        try:
+                            add_to_referral_balance_all(referrer_id, float(reward))
+                        except Exception as e:
+                            logger.warning(f"Failed to increment referral_balance_all for {referrer_id}: {e}")
+                        referrer_username = user_data.get('username', 'пользователь')
+                        if ok:
+                            try:
+                                await bot.send_message(
+                                    chat_id=referrer_id,
+                                    text=(
+                                        "💰 Вам начислено реферальное вознаграждение!\n"
+                                        f"Пользователь: {referrer_username} (ID: {user_id})\n"
+                                        f"Сумма: {float(reward):.2f} RUB"
+                                    )
+                                )
+                            except Exception as e:
+                                logger.warning(f"Could not send referral reward notification to {referrer_id}: {e}")
+        except Exception as e:
+            logger.warning(f"Referral: unexpected error while processing reward for user {user_id}: {e}")
 
         # Не считаем покупки, оплаченные с внутреннего баланса, в "Потрачено всего"
         pm = (payment_method or '').strip().lower()
@@ -2009,7 +2015,7 @@ async def process_successful_payment(bot: Bot, metadata: dict):
         key_number = next((i + 1 for i, key in enumerate(all_user_keys) if key['key_id'] == key_id), len(all_user_keys))
 
         final_text = get_purchase_success_text(
-            action="создан" if action == "new" else "продлен",
+            action="extend" if action == "extend" else "new",
             key_number=key_number,
             expiry_date=new_expiry_date or datetime.now(),
             connection_string=connection_string or ""
