@@ -577,31 +577,51 @@ def get_support_router() -> Router:
             return
         ticket = get_ticket(ticket_id)
         if not ticket:
-            await callback.message.edit_text("Тикет уже удалён или не найден.")
+            # Сообщение в треде может уже не существовать — используем callback.answer
+            try:
+                await callback.answer("Тикет уже удалён или не найден.", show_alert=False)
+            except Exception:
+                pass
             return
         forum_chat_id = int(ticket.get('forum_chat_id') or callback.message.chat.id)
         if not await _is_admin(bot, forum_chat_id, callback.from_user.id):
             return
+        # Постараемся заранее обновить UI (до удаления треда)
+        try:
+            await callback.message.edit_text(
+                f"🗑 Удаляю тикет #{ticket_id}..."
+            )
+        except Exception:
+            # Если сообщение уже исчезло/в другом состоянии — игнор
+            pass
+
+        # Удаляем/закрываем тред
         try:
             thread_id = ticket.get('message_thread_id') or getattr(callback.message, 'message_thread_id', None)
             if thread_id:
-                await bot.delete_forum_topic(chat_id=forum_chat_id, message_thread_id=int(thread_id))
+                try:
+                    await bot.delete_forum_topic(chat_id=forum_chat_id, message_thread_id=int(thread_id))
+                except Exception:
+                    try:
+                        await bot.close_forum_topic(chat_id=forum_chat_id, message_thread_id=int(thread_id))
+                    except Exception:
+                        pass
         except Exception:
+            pass
+
+        # Удаляем запись тикета из БД
+        ok = delete_ticket(ticket_id)
+        if ok:
+            # После удаления треда нельзя редактировать/слать в него сообщения — используем callback.answer
             try:
-                if thread_id:
-                    await bot.close_forum_topic(chat_id=forum_chat_id, message_thread_id=int(thread_id))
+                await callback.answer(f"🗑 Тикет #{ticket_id} удалён.", show_alert=False)
             except Exception:
                 pass
-        if delete_ticket(ticket_id):
-            try:
-                await callback.message.edit_text(f"🗑 Тикет #{ticket_id} удалён.")
-            except TelegramBadRequest as e:
-                if "message to edit not found" in str(e) or "message is not modified" in str(e):
-                    await callback.message.answer(f"🗑 Тикет #{ticket_id} удалён.")
-                else:
-                    raise
         else:
-            await callback.message.answer("❌ Не удалось удалить тикет.")
+            try:
+                await callback.answer("❌ Не удалось удалить тикет.", show_alert=True)
+            except Exception:
+                pass
 
     @router.callback_query(F.data.startswith("admin_star_"))
     async def admin_toggle_star(callback: types.CallbackQuery, bot: Bot):
