@@ -1405,6 +1405,46 @@ def find_and_complete_pending_transaction(payment_id: str) -> dict | None:
         return None
     _complete_pending(payment_id)
     return meta
+
+def get_latest_pending_for_user(user_id: int) -> dict | None:
+    """Return metadata of the most recent pending transaction for the user (without completing it)."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            # Ensure table exists
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pending_transactions (
+                    payment_id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    amount_rub REAL,
+                    metadata TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute(
+                """
+                SELECT payment_id, metadata FROM pending_transactions
+                WHERE user_id = ? AND status = 'pending'
+                ORDER BY datetime(created_at) DESC, datetime(updated_at) DESC
+                LIMIT 1
+                """,
+                (int(user_id),)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            try:
+                meta = json.loads(row["metadata"] or "{}")
+            except Exception:
+                meta = {}
+            meta.setdefault('payment_id', row["payment_id"]) 
+            return meta
+    except sqlite3.Error as e:
+        logging.error(f"Failed to read latest pending for user {user_id}: {e}")
+        return None
         
 def get_referrals_for_user(user_id: int) -> list[dict]:
     """Возвращает список пользователей, которых пригласил данный user_id.

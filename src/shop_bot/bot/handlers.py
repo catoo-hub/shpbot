@@ -52,6 +52,7 @@ from shop_bot.data_manager.remnawave_repository import (
     set_referral_start_bonus_received,
     update_key_host_and_info,
     find_and_complete_pending_transaction,
+    get_latest_pending_for_user,
 )
 
 from shop_bot.config import (
@@ -577,6 +578,18 @@ def get_user_router() -> Router:
         metadata = find_and_complete_pending_transaction(payload)
         if not metadata:
             logger.warning(f"Stars payment: metadata not found for payload {payload}")
+            # Fallback: try latest pending for this user (in case payload mismatch)
+            try:
+                fallback = get_latest_pending_for_user(message.from_user.id)
+            except Exception as e:
+                fallback = None
+                logger.error(f"Stars payment: fallback lookup failed for user {message.from_user.id}: {e}", exc_info=True)
+            if fallback and (fallback.get('payment_method') == 'Telegram Stars'):
+                pid = fallback.get('payment_id') or payload
+                logger.info(f"Stars payment: using fallback pending for user {message.from_user.id}, pid={pid}")
+                metadata = find_and_complete_pending_transaction(pid)
+        if not metadata:
+            # still nothing — stop
             return
         await process_successful_payment(bot, metadata)
 
