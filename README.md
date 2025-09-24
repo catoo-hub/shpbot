@@ -262,6 +262,7 @@ docker-compose down && docker-compose up -d --build
 
 ## 💎 Поддержать разработку
 **СБП/Карта РФ:** https://yookassa.ru/my/i/aJiSmSUeUie5/l
+**Т-Банк:** https://tbank.ru/cf/1JpNWKAFzqR
 
 ## Поддержка по проекту
 Техподдержка и сообщество: [t_shift_supportbot](https://t.me/t_shift_supportbot)
