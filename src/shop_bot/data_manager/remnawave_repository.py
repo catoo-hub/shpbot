@@ -223,6 +223,7 @@ _LEGACY_FORWARDERS = (
     "create_gift_key",
     "create_host",
     "create_pending_transaction",
+    "create_payload_pending",
     "create_plan",
     "create_support_ticket",
     "deduct_from_balance",

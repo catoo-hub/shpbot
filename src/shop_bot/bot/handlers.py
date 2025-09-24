@@ -53,6 +53,7 @@ from shop_bot.data_manager.remnawave_repository import (
     update_key_host_and_info,
     find_and_complete_pending_transaction,
     get_latest_pending_for_user,
+    create_payload_pending,
 )
 
 from shop_bot.config import (
@@ -488,7 +489,7 @@ def get_user_router() -> Router:
             "payment_id": payment_id,
         }
         try:
-            ok = create_pending_transaction(payment_id, user_id, float(price_rub), metadata)
+            ok = create_payload_pending(payment_id, user_id, float(price_rub), metadata)
             logger.info(f"Stars pending created: ok={ok}, payment_id={payment_id}, user_id={user_id}, price_rub={price_rub}")
         except Exception as e:
             logger.error(f"Failed to create pending for Stars payment_id={payment_id}: {e}", exc_info=True)
@@ -540,7 +541,7 @@ def get_user_router() -> Router:
             "payment_id": payment_id,
         }
         try:
-            ok = create_pending_transaction(payment_id, user_id, float(amount_rub), metadata)
+            ok = create_payload_pending(payment_id, user_id, float(amount_rub), metadata)
             logger.info(f"Stars topup pending created: ok={ok}, payment_id={payment_id}, user_id={user_id}, amount_rub={amount_rub}")
         except Exception as e:
             logger.error(f"Failed to create pending for Stars topup payment_id={payment_id}: {e}", exc_info=True)
@@ -589,8 +590,36 @@ def get_user_router() -> Router:
                 logger.info(f"Stars payment: using fallback pending for user {message.from_user.id}, pid={pid}")
                 metadata = find_and_complete_pending_transaction(pid)
         if not metadata:
-            # still nothing — stop
-            return
+            # Last resort: reconstruct top_up from successful_payment total_amount using stars_per_rub
+            try:
+                total_stars = int(getattr(message.successful_payment, 'total_amount', 0) or 0)
+            except Exception:
+                total_stars = 0
+            try:
+                stars_ratio_raw = get_setting("stars_per_rub") or '0'
+                stars_ratio = Decimal(stars_ratio_raw)
+            except Exception:
+                stars_ratio = Decimal('0')
+            if total_stars > 0 and stars_ratio > 0:
+                amount_rub = (Decimal(total_stars) / stars_ratio).quantize(Decimal('0.01'))
+                metadata = {
+                    "user_id": message.from_user.id,
+                    "price": float(amount_rub),
+                    "action": "top_up",
+                    "payment_method": "Telegram Stars",
+                    "payment_id": payload,
+                }
+                logger.info(f"Stars payment: reconstructing top_up from total_stars={total_stars}, ratio={stars_ratio}, amount_rub={amount_rub}")
+            else:
+                # still nothing — stop
+                logger.warning("Stars payment: cannot reconstruct payment metadata; skipping")
+                return
+        # Enrich metadata with current tg username if available for logging
+        try:
+            if message.from_user and message.from_user.username:
+                metadata.setdefault('tg_username', message.from_user.username)
+        except Exception:
+            pass
         await process_successful_payment(bot, metadata)
 
     # --- YooMoney ---
@@ -634,7 +663,7 @@ def get_user_router() -> Router:
             "payment_method": "YooMoney",
             "payment_id": payment_id,
         }
-        create_pending_transaction(payment_id, user_id, float(price_rub), metadata)
+        create_payload_pending(payment_id, user_id, float(price_rub), metadata)
         pay_url = _build_yoomoney_link(wallet, price_rub, payment_id)
         await callback.message.edit_text(
             "Нажмите на кнопку ниже для оплаты:",
@@ -662,7 +691,7 @@ def get_user_router() -> Router:
             "payment_method": "YooMoney",
             "payment_id": payment_id,
         }
-        create_pending_transaction(payment_id, user_id, float(amount_rub), metadata)
+        create_payload_pending(payment_id, user_id, float(amount_rub), metadata)
         pay_url = _build_yoomoney_link(wallet, amount_rub, payment_id)
         await callback.message.edit_text(
             "Нажмите на кнопку ниже для оплаты:",
@@ -2029,8 +2058,11 @@ async def process_successful_payment(bot: Bot, metadata: dict):
             ok = False
         # Лог транзакции
         try:
-            user_info = get_user(user_id)
-            log_username = user_info.get('username', 'N/A') if user_info else 'N/A'
+            # Предпочитаем username из metadata (может быть актуальнее)
+            log_username = (metadata.get('tg_username') or '').strip() if isinstance(metadata, dict) else ''
+            if not log_username:
+                user_info = get_user(user_id)
+                log_username = (user_info.get('username') if user_info else '') or f"@{user_id}"
             log_transaction(
                 username=log_username,
                 transaction_id=None,

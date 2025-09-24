@@ -1312,8 +1312,8 @@ def is_admin(user_id: int) -> bool:
     except Exception:
         return False
 
-# --- Pending transactions helpers (TON, YooMoney, Telegram Stars) ---
-def create_pending_transaction(payment_id: str, user_id: int, amount_rub: float | None, metadata: dict | None) -> bool:
+# --- Pending transactions helpers (YooMoney, Telegram Stars) ---
+def create_payload_pending(payment_id: str, user_id: int, amount_rub: float | None, metadata: dict | None) -> bool:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
@@ -1340,7 +1340,7 @@ def create_pending_transaction(payment_id: str, user_id: int, amount_rub: float 
             conn.commit()
             return True
     except sqlite3.Error as e:
-        logging.error(f"Failed to create pending transaction {payment_id}: {e}")
+        logging.error(f"Failed to create payload pending {payment_id}: {e}")
         return False
 
 def _get_pending_metadata(payment_id: str) -> dict | None:
