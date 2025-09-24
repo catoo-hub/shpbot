@@ -19,20 +19,32 @@ def create_main_menu_keyboard(user_keys: list, trial_available: bool, is_admin: 
     builder = InlineKeyboardBuilder()
     
     if trial_available and get_setting("trial_enabled") == "true":
-        builder.button(text="🎁 Попробовать бесплатно", callback_data="get_trial")
+        builder.button(text=(get_setting("btn_trial_text") or "🎁 Попробовать бесплатно"), callback_data="get_trial")
 
-    builder.button(text="👤 Мой профиль", callback_data="show_profile")
-    builder.button(text=f"🔑 Мои ключи ({len(user_keys)})", callback_data="manage_keys")
-    builder.button(text="🤝 Реферальная программа", callback_data="show_referral_program")
-    builder.button(text="🆘 Поддержка", callback_data="show_help")
-    builder.button(text="ℹ️ О проекте", callback_data="show_about")
+    builder.button(text=(get_setting("btn_profile_text") or "👤 Мой профиль"), callback_data="show_profile")
+    base_my_keys = (get_setting("btn_my_keys_text") or "🔑 Мои ключи")
+    builder.button(text=f"{base_my_keys} ({len(user_keys)})", callback_data="manage_keys")
+    # Быстрые действия из главного меню
+    builder.button(text=(get_setting("btn_buy_key_text") or "🛒 Купить ключ"), callback_data="buy_new_key")
+    builder.button(text=(get_setting("btn_topup_text") or "💳 Пополнить баланс"), callback_data="top_up_start")
+    builder.button(text=(get_setting("btn_referral_text") or "🤝 Реферальная программа"), callback_data="show_referral_program")
+    builder.button(text=(get_setting("btn_support_text") or "🆘 Поддержка"), callback_data="show_help")
+    builder.button(text=(get_setting("btn_about_text") or "ℹ️ О проекте"), callback_data="show_about")
     # Просмотр результатов последнего спидтеста по SSH-целям
-    builder.button(text="⚡ Скорость", callback_data="user_speedtest_last")
-    builder.button(text="❓ Как использовать", callback_data="howto_vless")
+    builder.button(text=(get_setting("btn_speed_text") or "⚡ Скорость"), callback_data="user_speedtest_last")
+    builder.button(text=(get_setting("btn_howto_text") or "❓ Как использовать"), callback_data="howto_vless")
     if is_admin:
-        builder.button(text="⚙️ Админка", callback_data="admin_menu")
-    # Разкладка: trial (1), профиль+ключи (2), реферал (1), поддержка+о проекте (2), скорость+как использовать (2), админка (1)
-    layout = [1 if trial_available and get_setting("trial_enabled") == "true" else 0, 2, 1, 2, 2, 1 if is_admin else 0]
+        builder.button(text=(get_setting("btn_admin_text") or "⚙️ Админка"), callback_data="admin_menu")
+    # Раскладка: trial (1), профиль+ключи (2), купить+пополнить (2), реферал (1), поддержка+о проекте (2), скорость+как использовать (2), админка (1)
+    layout = [
+        1 if trial_available and get_setting("trial_enabled") == "true" else 0,
+        2,  # профиль + ключи
+        2,  # купить + пополнить
+        1,  # рефералка
+        2,  # поддержка + о проекте
+        2,  # скорость + как использовать
+        1 if is_admin else 0,
+    ]
     actual_layout = [size for size in layout if size > 0]
     builder.adjust(*actual_layout)
     
@@ -48,7 +60,7 @@ def create_admin_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="♻️ Восстановить БД", callback_data="admin_restore_db")
     builder.button(text="👮 Администраторы", callback_data="admin_admins_menu")
     builder.button(text="📢 Рассылка", callback_data="start_broadcast")
-    builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     # 4 ряда по 2 кнопки (включая бэкап/восстановление), затем "Назад"
     builder.adjust(2, 2, 2, 2, 1)
     return builder.as_markup()
@@ -173,7 +185,7 @@ def create_about_keyboard(channel_url: str | None, terms_url: str | None, privac
         builder.button(text="📄 Условия использования", url=terms_url)
     if privacy_url:
         builder.button(text="🔒 Политика конфиденциальности", url=privacy_url)
-    builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(1)
     return builder.as_markup()
     
@@ -205,12 +217,12 @@ def create_support_keyboard(support_user: str | None = None) -> InlineKeyboardMa
             url = f"tg://resolve?domain={username}"
 
     if url:
-        builder.button(text="🆘 Написать в поддержку", url=url)
-        builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
+        builder.button(text=(get_setting("btn_support_text") or "🆘 Поддержка"), url=url)
+        builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     else:
         # Фолбэк: встроенное меню поддержки
-        builder.button(text="🆘 Поддержка", callback_data="show_help")
-        builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
+        builder.button(text=(get_setting("btn_support_text") or "🆘 Поддержка"), callback_data="show_help")
+        builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -219,7 +231,7 @@ def create_support_bot_link_keyboard(support_bot_username: str) -> InlineKeyboar
     username = support_bot_username.lstrip("@")
     deep_link = f"tg://resolve?domain={username}&start=new"
     builder.button(text="🆘 Открыть поддержку", url=deep_link)
-    builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -229,7 +241,7 @@ def create_support_menu_keyboard(has_external: bool = False) -> InlineKeyboardMa
     builder.button(text="📨 Мои обращения", callback_data="support_my_tickets")
     if has_external:
         builder.button(text="🆘 Внешняя поддержка", callback_data="support_external")
-    builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -357,8 +369,8 @@ def create_keys_management_keyboard(keys: list) -> InlineKeyboardMarkup:
             host_name = key.get('host_name', 'Неизвестный хост')
             button_text = f"{status_icon} Ключ #{i+1} ({host_name}) (до {expiry_date.strftime('%d.%m.%Y')})"
             builder.button(text=button_text, callback_data=f"show_key_{key['key_id']}")
-    builder.button(text="➕ Купить новый ключ", callback_data="buy_new_key")
-    builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
+    builder.button(text=(get_setting("btn_buy_key_text") or "🛒 Купить ключ"), callback_data="buy_new_key")
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -377,7 +389,7 @@ def create_howto_vless_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="📱 iOS", callback_data="howto_ios")
     builder.button(text="💻 Windows", callback_data="howto_windows")
     builder.button(text="🐧 Linux", callback_data="howto_linux")
-    builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(2, 2, 1)
     return builder.as_markup()
 
@@ -393,14 +405,14 @@ def create_howto_vless_keyboard_key(key_id: int) -> InlineKeyboardMarkup:
 
 def create_back_to_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     return builder.as_markup()
 
 def create_profile_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="➕ Пополнить баланс", callback_data="top_up_start")
-    builder.button(text="🤝 Реферальная программа", callback_data="show_referral_program")
-    builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
+    builder.button(text=(get_setting("btn_topup_text") or "💳 Пополнить баланс"), callback_data="top_up_start")
+    builder.button(text=(get_setting("btn_referral_text") or "🤝 Реферальная программа"), callback_data="show_referral_program")
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(1)
     return builder.as_markup()
 

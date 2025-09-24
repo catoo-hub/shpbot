@@ -63,6 +63,13 @@ ALL_SETTINGS_KEYS = [
     "support_bot_token", "support_bot_username",
     # UI
     "panel_brand_title",
+    # Контент бота: тексты главного меню и инструкций
+    "main_menu_text", "howto_intro_text",
+    "howto_android_text", "howto_ios_text", "howto_windows_text", "howto_linux_text",
+    # Подписи кнопок бота
+    "btn_trial_text", "btn_profile_text", "btn_my_keys_text", "btn_buy_key_text", "btn_topup_text",
+    "btn_referral_text", "btn_support_text", "btn_about_text", "btn_speed_text", "btn_howto_text",
+    "btn_admin_text", "btn_back_to_menu_text",
     # Backups
     "backup_interval_days",
 ]

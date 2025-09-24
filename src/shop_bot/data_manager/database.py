@@ -291,6 +291,26 @@ def initialize_db():
                 "remnawave_cookies": "{}",
                 "remnawave_is_local_network": "false",
                 "default_extension_days": "30",
+                # UI texts: main menu and how-to instructions (editable)
+                "main_menu_text": None,
+                "howto_intro_text": None,
+                "howto_android_text": None,
+                "howto_ios_text": None,
+                "howto_windows_text": None,
+                "howto_linux_text": None,
+                # UI button labels (main menu and common)
+                "btn_trial_text": None,
+                "btn_profile_text": None,
+                "btn_my_keys_text": None,
+                "btn_buy_key_text": None,
+                "btn_topup_text": None,
+                "btn_referral_text": None,
+                "btn_support_text": None,
+                "btn_about_text": None,
+                "btn_speed_text": None,
+                "btn_howto_text": None,
+                "btn_admin_text": None,
+                "btn_back_to_menu_text": None,
             }
             run_migration()
             for key, value in default_settings.items():
