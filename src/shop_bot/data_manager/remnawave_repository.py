@@ -262,6 +262,7 @@ _LEGACY_FORWARDERS = (
     "get_ticket",
     "get_ticket_by_thread",
     "get_ticket_messages",
+    "get_or_create_open_ticket",
     "get_tickets_paginated",
     "get_total_keys_count",
     "get_total_spent_sum",

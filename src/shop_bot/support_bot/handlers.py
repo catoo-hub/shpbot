@@ -16,6 +16,7 @@ from shop_bot.data_manager.remnawave_repository import (
     set_ticket_status,
     update_ticket_thread_info,
     get_ticket_by_thread,
+    get_or_create_open_ticket,
     update_ticket_subject,
     delete_ticket,
     is_admin,
@@ -142,21 +143,13 @@ def get_support_router() -> Router:
         data = await state.get_data()
         raw_subject = (data.get("subject") or "").strip()
         subject = raw_subject if raw_subject else "Обращение без темы"
-        existing = _get_latest_open_ticket(user_id)
-        created_new = False
-        if existing:
-            ticket_id = int(existing['ticket_id'])
-            add_support_message(ticket_id, sender="user", content=(message.text or message.caption or ""))
-            ticket = get_ticket(ticket_id)
-        else:
-            ticket_id = create_support_ticket(user_id, subject)
-            if not ticket_id:
-                await message.answer("❌ Не удалось создать обращение. Попробуйте позже.")
-                await state.clear()
-                return
-            add_support_message(ticket_id, sender="user", content=(message.text or message.caption or ""))
-            ticket = get_ticket(ticket_id)
-            created_new = True
+        ticket_id, created_new = get_or_create_open_ticket(user_id, subject)
+        if not ticket_id:
+            await message.answer("❌ Не удалось создать обращение. Попробуйте позже.")
+            await state.clear()
+            return
+        add_support_message(ticket_id, sender="user", content=(message.text or message.caption or ""))
+        ticket = get_ticket(ticket_id)
         support_forum_chat_id = get_setting("support_forum_chat_id")
         thread_id = None
         if support_forum_chat_id and not (ticket and ticket.get('message_thread_id')):
@@ -466,7 +459,7 @@ def get_support_router() -> Router:
         if ok:
             try:
                 forum_chat_id = ticket.get('forum_chat_id')
-                thread_id = ticket.get('message_thread_id')
+                thread_id = ticket.get('message_thread_id') or getattr(callback.message, 'message_thread_id', None)
                 if forum_chat_id and thread_id:
                     try:
                         username = (callback.from_user.username and f"@{callback.from_user.username}") or callback.from_user.full_name or str(callback.from_user.id)
@@ -483,7 +476,10 @@ def get_support_router() -> Router:
                         )
                     except Exception:
                         pass
-                await bot.close_forum_topic(chat_id=int(forum_chat_id), message_thread_id=int(thread_id))
+                    try:
+                        await bot.close_forum_topic(chat_id=int(forum_chat_id), message_thread_id=int(thread_id))
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.warning(f"Failed to close forum topic for ticket {ticket_id} from bot: {e}")
             await callback.message.edit_text("✅ Тикет закрыт.", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ К списку", callback_data="support_my_tickets")]]))
@@ -510,7 +506,7 @@ def get_support_router() -> Router:
             return
         if set_ticket_status(ticket_id, 'closed'):
             try:
-                thread_id = ticket.get('message_thread_id')
+                thread_id = ticket.get('message_thread_id') or getattr(callback.message, 'message_thread_id', None)
                 if thread_id:
                     await bot.close_forum_topic(chat_id=forum_chat_id, message_thread_id=int(thread_id))
             except Exception:
@@ -549,7 +545,7 @@ def get_support_router() -> Router:
             return
         if set_ticket_status(ticket_id, 'open'):
             try:
-                thread_id = ticket.get('message_thread_id')
+                thread_id = ticket.get('message_thread_id') or getattr(callback.message, 'message_thread_id', None)
                 if thread_id:
                     await bot.reopen_forum_topic(chat_id=forum_chat_id, message_thread_id=int(thread_id))
             except Exception:
@@ -587,7 +583,7 @@ def get_support_router() -> Router:
         if not await _is_admin(bot, forum_chat_id, callback.from_user.id):
             return
         try:
-            thread_id = ticket.get('message_thread_id')
+            thread_id = ticket.get('message_thread_id') or getattr(callback.message, 'message_thread_id', None)
             if thread_id:
                 await bot.delete_forum_topic(chat_id=forum_chat_id, message_thread_id=int(thread_id))
         except Exception:
@@ -816,26 +812,12 @@ def get_support_router() -> Router:
         if not user_id:
             return
 
-        tickets = get_user_tickets(user_id)
         content = (message.text or message.caption or '')
-        ticket = None
-        if not tickets:
-            ticket_id = create_support_ticket(user_id, None)
-            add_support_message(ticket_id, sender='user', content=content)
-            ticket = get_ticket(ticket_id)
-            created_new = True
-        else:
-            open_tickets = [t for t in tickets if t.get('status') == 'open']
-            if not open_tickets:
-                ticket_id = create_support_ticket(user_id, None)
-                add_support_message(ticket_id, sender='user', content=content)
-                ticket = get_ticket(ticket_id)
-                created_new = True
-            else:
-                ticket = max(open_tickets, key=lambda t: int(t['ticket_id']))
-                ticket_id = int(ticket['ticket_id'])
-                add_support_message(ticket_id, sender='user', content=content)
-                created_new = False
+        ticket_id, created_new = get_or_create_open_ticket(user_id, None)
+        if not ticket_id:
+            return
+        add_support_message(ticket_id, sender='user', content=content)
+        ticket = get_ticket(ticket_id)
 
         try:
             forum_chat_id = ticket.get('forum_chat_id')
@@ -903,7 +885,7 @@ def get_support_router() -> Router:
             if created_new:
                 await message.answer(f"✅ Обращение создано: #{ticket_id}. Мы ответим вам как можно скорее.")
             else:
-                await message.answer("Сообщение принято. Поддержка скоро ответит.")
+                await message.answer(f"✉️ Сообщение добавлено в ваш открытый тикет #{ticket_id}.")
         except Exception:
             pass
 

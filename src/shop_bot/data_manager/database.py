@@ -213,6 +213,11 @@ def initialize_db():
                     FOREIGN KEY (ticket_id) REFERENCES support_tickets (ticket_id)
                 )
             ''')
+            # Индекс для быстрого поиска тикета по паре (forum_chat_id, message_thread_id)
+            try:
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_support_tickets_thread ON support_tickets(forum_chat_id, message_thread_id)")
+            except Exception:
+                pass
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS host_speedtests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -508,6 +513,11 @@ def run_migration():
             _ensure_support_tickets_columns(cursor)
             _ensure_vpn_keys_schema(cursor)
             _ensure_ssh_targets_table(cursor)
+            # Ensure thread index exists (safe to create idempotently)
+            try:
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_support_tickets_thread ON support_tickets(forum_chat_id, message_thread_id)")
+            except Exception:
+                pass
             cursor.execute("PRAGMA foreign_keys = ON")
             conn.commit()
     except sqlite3.Error as e:
@@ -2150,6 +2160,18 @@ def create_support_ticket(user_id: int, subject: str | None = None) -> int | Non
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
+            # 1) Если уже есть открытый тикет — возвращаем его и НЕ создаём новый
+            try:
+                cursor.execute(
+                    "SELECT ticket_id FROM support_tickets WHERE user_id = ? AND status = 'open' ORDER BY updated_at DESC LIMIT 1",
+                    (user_id,)
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return int(row[0])
+            except Exception:
+                pass
+            # 2) Иначе — создаём новый тикет
             cursor.execute(
                 "INSERT INTO support_tickets (user_id, subject) VALUES (?, ?)",
                 (user_id, subject)
@@ -2159,6 +2181,32 @@ def create_support_ticket(user_id: int, subject: str | None = None) -> int | Non
     except sqlite3.Error as e:
         logging.error(f"Failed to create support ticket for user {user_id}: {e}")
         return None
+
+def get_or_create_open_ticket(user_id: int, subject: str | None = None) -> tuple[int | None, bool]:
+    """Возвращает ID открытого тикета пользователя и флаг, создан ли новый.
+    Если открытого тикета нет — создаёт новый и возвращает (id, True).
+    """
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            # Проверим наличие открытого тикета
+            cursor.execute(
+                "SELECT ticket_id FROM support_tickets WHERE user_id = ? AND status = 'open' ORDER BY updated_at DESC LIMIT 1",
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            if row and row[0]:
+                return int(row[0]), False
+            # Создаём новый
+            cursor.execute(
+                "INSERT INTO support_tickets (user_id, subject) VALUES (?, ?)",
+                (user_id, subject)
+            )
+            conn.commit()
+            return int(cursor.lastrowid), True
+    except sqlite3.Error as e:
+        logging.error(f"Failed to get_or_create_open_ticket for user {user_id}: {e}")
+        return None, False
 
 def add_support_message(ticket_id: int, sender: str, content: str) -> int | None:
     try:
