@@ -486,7 +486,11 @@ def get_user_router() -> Router:
             "payment_method": "Telegram Stars",
             "payment_id": payment_id,
         }
-        create_pending_transaction(payment_id, user_id, float(price_rub), metadata)
+        try:
+            ok = create_pending_transaction(payment_id, user_id, float(price_rub), metadata)
+            logger.info(f"Stars pending created: ok={ok}, payment_id={payment_id}, user_id={user_id}, price_rub={price_rub}")
+        except Exception as e:
+            logger.error(f"Failed to create pending for Stars payment_id={payment_id}: {e}", exc_info=True)
 
         title = f"Подписка на {int(plan['months'])} мес."
         description = f"Оплата VPN на {int(plan['months'])} мес."
@@ -534,7 +538,11 @@ def get_user_router() -> Router:
             "payment_method": "Telegram Stars",
             "payment_id": payment_id,
         }
-        create_pending_transaction(payment_id, user_id, float(amount_rub), metadata)
+        try:
+            ok = create_pending_transaction(payment_id, user_id, float(amount_rub), metadata)
+            logger.info(f"Stars topup pending created: ok={ok}, payment_id={payment_id}, user_id={user_id}, amount_rub={amount_rub}")
+        except Exception as e:
+            logger.error(f"Failed to create pending for Stars topup payment_id={payment_id}: {e}", exc_info=True)
         try:
             await callback.message.answer_invoice(
                 title="Пополнение баланса",

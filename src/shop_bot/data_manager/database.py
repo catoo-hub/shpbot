@@ -555,6 +555,21 @@ def run_migration():
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_support_tickets_thread ON support_tickets(forum_chat_id, message_thread_id)")
             except Exception:
                 pass
+            # Ensure pending_transactions table exists for existing databases
+            try:
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pending_transactions (
+                        payment_id TEXT PRIMARY KEY,
+                        user_id INTEGER NOT NULL,
+                        amount_rub REAL,
+                        metadata TEXT,
+                        status TEXT DEFAULT 'pending',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+            except Exception:
+                pass
             cursor.execute("PRAGMA foreign_keys = ON")
             conn.commit()
     except sqlite3.Error as e:
@@ -1302,6 +1317,18 @@ def create_pending_transaction(payment_id: str, user_id: int, amount_rub: float 
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
+            # Ensure table exists
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pending_transactions (
+                    payment_id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    amount_rub REAL,
+                    metadata TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
             cursor.execute(
                 '''
                 INSERT OR REPLACE INTO pending_transactions (payment_id, user_id, amount_rub, metadata, status, created_at, updated_at)
@@ -1313,7 +1340,7 @@ def create_pending_transaction(payment_id: str, user_id: int, amount_rub: float 
             conn.commit()
             return True
     except sqlite3.Error as e:
-        logger.error(f"Failed to create pending transaction {payment_id}: {e}")
+        logging.error(f"Failed to create pending transaction {payment_id}: {e}")
         return False
 
 def _get_pending_metadata(payment_id: str) -> dict | None:
@@ -1321,6 +1348,18 @@ def _get_pending_metadata(payment_id: str) -> dict | None:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
+            # Ensure table exists
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pending_transactions (
+                    payment_id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    amount_rub REAL,
+                    metadata TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
             cursor.execute("SELECT * FROM pending_transactions WHERE payment_id = ?", (payment_id,))
             row = cursor.fetchone()
             if not row:
@@ -1333,7 +1372,7 @@ def _get_pending_metadata(payment_id: str) -> dict | None:
             meta.setdefault('payment_id', payment_id)
             return meta
     except sqlite3.Error as e:
-        logger.error(f"Failed to read pending transaction {payment_id}: {e}")
+        logging.error(f"Failed to read pending transaction {payment_id}: {e}")
         return None
 
 def _complete_pending(payment_id: str) -> bool:
@@ -1347,7 +1386,7 @@ def _complete_pending(payment_id: str) -> bool:
             conn.commit()
             return cursor.rowcount > 0
     except sqlite3.Error as e:
-        logger.error(f"Failed to complete pending transaction {payment_id}: {e}")
+        logging.error(f"Failed to complete pending transaction {payment_id}: {e}")
         return False
 
 def find_and_complete_ton_transaction(payment_id: str, amount_ton: float | None = None) -> dict | None:
