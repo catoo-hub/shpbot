@@ -332,7 +332,6 @@ def create_payment_method_keyboard(
         builder.button(text="💜 YooMoney", callback_data="pay_yoomoney")
 
     builder.button(text="⬅️ Назад", callback_data="back_to_email_prompt")
-    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -370,7 +369,6 @@ def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboar
         builder.button(text="💜 YooMoney", callback_data="topup_pay_yoomoney")
 
     builder.button(text="⬅️ Назад", callback_data="show_profile")
-    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
