@@ -196,6 +196,8 @@ def initialize_db():
                     user_id INTEGER NOT NULL,
                     status TEXT NOT NULL DEFAULT "open",
                     subject TEXT,
+                    forum_chat_id TEXT,
+                    message_thread_id INTEGER,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -346,6 +348,15 @@ def _ensure_plans_columns(cursor: sqlite3.Cursor) -> None:
         _ensure_table_column(cursor, "plans", column, definition)
 
 
+def _ensure_support_tickets_columns(cursor: sqlite3.Cursor) -> None:
+    extras = {
+        "forum_chat_id": "TEXT",
+        "message_thread_id": "INTEGER",
+    }
+    for column, definition in extras.items():
+        _ensure_table_column(cursor, "support_tickets", column, definition)
+
+
 def _finalize_vpn_key_indexes(cursor: sqlite3.Cursor) -> None:
     _ensure_unique_index(cursor, "uq_vpn_keys_email", "vpn_keys", "email")
     _ensure_unique_index(cursor, "uq_vpn_keys_key_email", "vpn_keys", "key_email")
@@ -494,6 +505,7 @@ def run_migration():
             _ensure_users_columns(cursor)
             _ensure_hosts_columns(cursor)
             _ensure_plans_columns(cursor)
+            _ensure_support_tickets_columns(cursor)
             _ensure_vpn_keys_schema(cursor)
             _ensure_ssh_targets_table(cursor)
             cursor.execute("PRAGMA foreign_keys = ON")
