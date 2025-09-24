@@ -233,6 +233,7 @@ _LEGACY_FORWARDERS = (
     "delete_ticket",
     "delete_user_keys",
     "find_and_complete_ton_transaction",
+    "find_and_complete_pending_transaction",
     "get_admin_ids",
     "get_admin_stats",
     "get_all_hosts",

@@ -104,6 +104,20 @@ class BotController:
             tonapi_key = rw_repo.get_setting("tonapi_key")
             tonconnect_enabled = bool(ton_wallet_address and tonapi_key)
 
+            # YooMoney availability: require wallet and secret
+            yoomoney_wallet = (rw_repo.get_setting("yoomoney_wallet") or '').strip()
+            yoomoney_secret = (rw_repo.get_setting("yoomoney_secret") or '').strip()
+            yoomoney_enabled = bool(yoomoney_wallet and yoomoney_secret)
+
+            # Telegram Stars availability: require explicit enable flag and positive conversion ratio
+            stars_flag = (rw_repo.get_setting("stars_enabled") or 'false').strip().lower() == 'true'
+            try:
+                stars_ratio_raw = rw_repo.get_setting("stars_per_rub") or '0'
+                stars_ratio = float(stars_ratio_raw)
+            except Exception:
+                stars_ratio = 0.0
+            stars_enabled = stars_flag and (stars_ratio > 0)
+
             if yookassa_enabled:
                 Configuration.account_id = yookassa_shop_id
                 Configuration.secret_key = yookassa_secret_key
@@ -112,7 +126,9 @@ class BotController:
                 "yookassa": yookassa_enabled,
                 "heleket": heleket_enabled,
                 "cryptobot": cryptobot_enabled,
-                "tonconnect": tonconnect_enabled
+                "tonconnect": tonconnect_enabled,
+                "yoomoney": yoomoney_enabled,
+                "stars": stars_enabled,
             }
             handlers.TELEGRAM_BOT_USERNAME = bot_username
             handlers.ADMIN_ID = admin_id

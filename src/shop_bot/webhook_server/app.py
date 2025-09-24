@@ -33,6 +33,7 @@ from shop_bot.data_manager.remnawave_repository import (
     get_total_keys_count, get_total_spent_sum, get_daily_stats_for_charts,
     get_recent_transactions, get_paginated_transactions, get_all_users, get_user_keys,
     ban_user, unban_user, delete_user_keys, get_setting, find_and_complete_ton_transaction,
+    find_and_complete_pending_transaction,
     get_tickets_paginated, get_open_tickets_count, get_ticket, get_ticket_messages,
     add_support_message, set_ticket_status, delete_ticket,
     get_closed_tickets_count, get_all_tickets_count, update_host_subscription_url,
@@ -72,6 +73,8 @@ ALL_SETTINGS_KEYS = [
     "btn_admin_text", "btn_back_to_menu_text",
     # Backups
     "backup_interval_days",
+    # YooMoney (P2P) and Telegram Stars
+    "yoomoney_wallet", "yoomoney_secret", "stars_per_rub", "stars_enabled",
 ]
 
 def create_webhook_app(bot_controller_instance):
@@ -1145,7 +1148,7 @@ def create_webhook_app(bot_controller_instance):
                 update_setting('panel_password', request.form.get('panel_password'))
 
             # Обработка чекбоксов, где в форме идёт hidden=false + checkbox=true
-            checkbox_keys = ['force_subscription', 'sbp_enabled', 'trial_enabled', 'enable_referrals', 'enable_fixed_referral_bonus']
+            checkbox_keys = ['force_subscription', 'sbp_enabled', 'trial_enabled', 'enable_referrals', 'enable_fixed_referral_bonus', 'stars_enabled']
             for checkbox_key in checkbox_keys:
                 values = request.form.getlist(checkbox_key)
                 value = values[-1] if values else 'false'
@@ -1718,6 +1721,53 @@ def create_webhook_app(bot_controller_instance):
             logger.error(f"Ошибка в обработчике вебхука YooKassa: {e}", exc_info=True)
             return 'Error', 500
         
+    @csrf.exempt
+    @flask_app.route('/yoomoney-webhook', methods=['POST'])
+    def yoomoney_webhook_handler():
+        """ЮMoney HTTP уведомление (кнопка/ссылка p2p). Подпись: sha1(notification_type&operation_id&amount&currency&datetime&sender&codepro&notification_secret&label)."""
+        try:
+            form = request.form
+            required = [
+                'notification_type', 'operation_id', 'amount', 'currency', 'datetime', 'sender', 'codepro', 'label', 'sha1_hash'
+            ]
+            if not all(k in form for k in required):
+                logger.warning("YooMoney webhook: missing required fields")
+                return 'Bad Request', 400
+            secret = get_setting('yoomoney_secret') or ''
+            signature_str = "&".join([
+                form.get('notification_type',''),
+                form.get('operation_id',''),
+                form.get('amount',''),
+                form.get('currency',''),
+                form.get('datetime',''),
+                form.get('sender',''),
+                form.get('codepro',''),
+                secret,
+                form.get('label',''),
+            ])
+            expected = hashlib.sha1(signature_str.encode('utf-8')).hexdigest()
+            provided = (form.get('sha1_hash') or '').lower()
+            if expected != provided:
+                logger.warning("YooMoney webhook: invalid signature")
+                return 'Forbidden', 403
+            # Use label as payment_id
+            payment_id = form.get('label')
+            if not payment_id:
+                return 'OK', 200
+            metadata = find_and_complete_pending_transaction(payment_id)
+            if not metadata:
+                logger.warning(f"YooMoney webhook: metadata not found for label {payment_id}")
+                return 'OK', 200
+            bot = _bot_controller.get_bot_instance()
+            loop = current_app.config.get('EVENT_LOOP')
+            payment_processor = handlers.process_successful_payment
+            if bot and loop and loop.is_running():
+                asyncio.run_coroutine_threadsafe(payment_processor(bot, metadata), loop)
+            return 'OK', 200
+        except Exception as e:
+            logger.error(f"Ошибка в обработчике вебхука YooMoney: {e}", exc_info=True)
+            return 'Error', 500
+
     @csrf.exempt
     @flask_app.route('/cryptobot-webhook', methods=['POST'])
     def cryptobot_webhook_handler():

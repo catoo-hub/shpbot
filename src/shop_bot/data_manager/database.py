@@ -110,6 +110,18 @@ def initialize_db():
                     referral_start_bonus_received BOOLEAN DEFAULT 0
                 )
             ''')
+            # Pending transactions for external payment flows (TON, YooMoney, Telegram Stars)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pending_transactions (
+                    payment_id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    amount_rub REAL,
+                    metadata TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS vpn_keys (
                     key_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -311,6 +323,11 @@ def initialize_db():
                 "btn_howto_text": None,
                 "btn_admin_text": None,
                 "btn_back_to_menu_text": None,
+                # Payments: YooMoney and Telegram Stars
+                "stars_enabled": "false",
+                "yoomoney_wallet": None,
+                "yoomoney_secret": None,
+                "stars_per_rub": "1",
             }
             run_migration()
             for key, value in default_settings.items():
@@ -1279,6 +1296,76 @@ def is_admin(user_id: int) -> bool:
         return int(user_id) in get_admin_ids()
     except Exception:
         return False
+
+# --- Pending transactions helpers (TON, YooMoney, Telegram Stars) ---
+def create_pending_transaction(payment_id: str, user_id: int, amount_rub: float | None, metadata: dict | None) -> bool:
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                INSERT OR REPLACE INTO pending_transactions (payment_id, user_id, amount_rub, metadata, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, COALESCE((SELECT status FROM pending_transactions WHERE payment_id = ?), 'pending'),
+                        COALESCE((SELECT created_at FROM pending_transactions WHERE payment_id = ?), CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+                '''
+                , (payment_id, int(user_id), float(amount_rub) if amount_rub is not None else None, json.dumps(metadata or {}), payment_id, payment_id)
+            )
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        logger.error(f"Failed to create pending transaction {payment_id}: {e}")
+        return False
+
+def _get_pending_metadata(payment_id: str) -> dict | None:
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM pending_transactions WHERE payment_id = ?", (payment_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            try:
+                meta = json.loads(row["metadata"] or "{}")
+            except Exception:
+                meta = {}
+            # Enrich with payment_id if missing
+            meta.setdefault('payment_id', payment_id)
+            return meta
+    except sqlite3.Error as e:
+        logger.error(f"Failed to read pending transaction {payment_id}: {e}")
+        return None
+
+def _complete_pending(payment_id: str) -> bool:
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE pending_transactions SET status = 'paid', updated_at = CURRENT_TIMESTAMP WHERE payment_id = ?",
+                (payment_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        logger.error(f"Failed to complete pending transaction {payment_id}: {e}")
+        return False
+
+def find_and_complete_ton_transaction(payment_id: str, amount_ton: float | None = None) -> dict | None:
+    """Locate pending transaction by payment_id and mark it paid. Return metadata for processing.
+    The amount check is not enforced here; validation should be done on the webhook provider side.
+    """
+    meta = _get_pending_metadata(payment_id)
+    if not meta:
+        return None
+    _complete_pending(payment_id)
+    return meta
+
+def find_and_complete_pending_transaction(payment_id: str) -> dict | None:
+    meta = _get_pending_metadata(payment_id)
+    if not meta:
+        return None
+    _complete_pending(payment_id)
+    return meta
         
 def get_referrals_for_user(user_id: int) -> list[dict]:
     """Возвращает список пользователей, которых пригласил данный user_id.

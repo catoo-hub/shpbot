@@ -326,19 +326,28 @@ def create_payment_method_keyboard(
         callback_data_ton = "pay_tonconnect"
         logger.info(f"Creating TON button with callback_data: '{callback_data_ton}'")
         builder.button(text="🪙 TON Connect", callback_data=callback_data_ton)
+    if payment_methods and payment_methods.get("stars"):
+        builder.button(text="⭐ Telegram Stars", callback_data="pay_stars")
+    if payment_methods and payment_methods.get("yoomoney"):
+        builder.button(text="💜 YooMoney", callback_data="pay_yoomoney")
 
     builder.button(text="⬅️ Назад", callback_data="back_to_email_prompt")
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
 def create_ton_connect_keyboard(connect_url: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="🚀 Открыть кошелек", url=connect_url)
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
+    builder.adjust(1)
     return builder.as_markup()
 
 def create_payment_keyboard(payment_url: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Перейти к оплате", url=payment_url)
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
+    builder.adjust(1)
     return builder.as_markup()
 
 def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboardMarkup:
@@ -355,8 +364,13 @@ def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboar
         builder.button(text="🤖 CryptoBot", callback_data="topup_pay_cryptobot")
     if payment_methods and payment_methods.get("tonconnect"):
         builder.button(text="🪙 TON Connect", callback_data="topup_pay_tonconnect")
+    if payment_methods and payment_methods.get("stars"):
+        builder.button(text="⭐ Telegram Stars", callback_data="topup_pay_stars")
+    if payment_methods and payment_methods.get("yoomoney"):
+        builder.button(text="💜 YooMoney", callback_data="topup_pay_yoomoney")
 
     builder.button(text="⬅️ Назад", callback_data="show_profile")
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(1)
     return builder.as_markup()
 

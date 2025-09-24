@@ -24,7 +24,7 @@ from pytonconnect import TonConnect
 from pytonconnect.exceptions import UserRejectsError
 
 from aiogram import Bot, Router, F, types, html
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, LabeledPrice, PreCheckoutQuery
 from aiogram.filters import Command, CommandObject, CommandStart, StateFilter
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
@@ -51,6 +51,7 @@ from shop_bot.data_manager.remnawave_repository import (
     is_admin,
     set_referral_start_bonus_received,
     update_key_host_and_info,
+    find_and_complete_pending_transaction,
 )
 
 from shop_bot.config import (
@@ -361,6 +362,7 @@ def get_user_router() -> Router:
         await callback.answer()
         await callback.message.edit_text(
             "Введите сумму пополнения в рублях (например, 300):\nМинимум: 10 RUB, максимум: 100000 RUB",
+            reply_markup=keyboards.create_back_to_menu_keyboard()
         )
         await state.set_state(TopUpProcess.waiting_for_amount)
 
@@ -370,16 +372,16 @@ def get_user_router() -> Router:
         try:
             amount = Decimal(text)
         except Exception:
-            await message.answer("❌ Введите корректную сумму, например: 300")
+            await message.answer("❌ Введите корректную сумму, например: 300", reply_markup=keyboards.create_back_to_menu_keyboard())
             return
         if amount <= 0:
-            await message.answer("❌ Сумма должна быть положительной")
+            await message.answer("❌ Сумма должна быть положительной", reply_markup=keyboards.create_back_to_menu_keyboard())
             return
         if amount < Decimal("10"):
-            await message.answer("❌ Минимальная сумма пополнения: 10 RUB")
+            await message.answer("❌ Минимальная сумма пополнения: 10 RUB", reply_markup=keyboards.create_back_to_menu_keyboard())
             return
         if amount > Decimal("100000"):
-            await message.answer("❌ Максимальная сумма пополнения: 100000 RUB")
+            await message.answer("❌ Максимальная сумма пополнения: 100000 RUB", reply_markup=keyboards.create_back_to_menu_keyboard())
             return
         final_amount = amount.quantize(Decimal("0.01"))
         await state.update_data(topup_amount=float(final_amount))
@@ -413,7 +415,9 @@ def get_user_router() -> Router:
                         "description": f"Пополнение баланса",
                         "quantity": "1.00",
                         "amount": {"value": price_str_for_api, "currency": "RUB"},
-                        "vat_code": "1"
+                        "vat_code": "1",
+                        "payment_subject": "service",
+                        "payment_mode": "full_payment"
                     }]
                 }
 
@@ -442,6 +446,208 @@ def get_user_router() -> Router:
             await callback.message.answer("Не удалось создать ссылку на оплату.")
             await state.clear()
 
+    # --- Telegram Stars (XTR) ---
+    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_stars")
+    async def create_stars_invoice_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Готовлю счёт в Telegram Stars...")
+        data = await state.get_data()
+        plan = get_plan_by_id(data.get('plan_id'))
+        if not plan:
+            await callback.message.edit_text("❌ Ошибка: Тариф не найден.")
+            await state.clear()
+            return
+        user_id = callback.from_user.id
+        # Итого к оплате
+        price_rub = Decimal(str(data.get('final_price', plan['price'])))
+        try:
+            stars_ratio_raw = get_setting("stars_per_rub") or '0'
+            stars_ratio = Decimal(stars_ratio_raw)
+        except Exception:
+            stars_ratio = Decimal('0')
+        if stars_ratio <= 0:
+            await callback.message.edit_text("❌ Оплата в Stars временно недоступна.")
+            await state.clear()
+            return
+        # Кол-во звёзд — целое число
+        stars_amount = int((price_rub * stars_ratio).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+        if stars_amount <= 0:
+            stars_amount = 1
+
+        payment_id = str(uuid.uuid4())
+        metadata = {
+            "user_id": user_id,
+            "months": int(plan['months']),
+            "price": float(price_rub),
+            "action": data.get('action'),
+            "key_id": data.get('key_id'),
+            "host_name": data.get('host_name'),
+            "plan_id": data.get('plan_id'),
+            "customer_email": data.get('customer_email'),
+            "payment_method": "Telegram Stars",
+            "payment_id": payment_id,
+        }
+        create_pending_transaction(payment_id, user_id, float(price_rub), metadata)
+
+        title = f"Подписка на {int(plan['months'])} мес."
+        description = f"Оплата VPN на {int(plan['months'])} мес."
+        try:
+            await callback.message.answer_invoice(
+                title=title,
+                description=description,
+                prices=[LabeledPrice(label=title, amount=stars_amount)],
+                payload=payment_id,
+                currency="XTR",
+            )
+            await state.clear()
+        except Exception as e:
+            logger.error(f"Failed to create Stars invoice: {e}")
+            await callback.message.edit_text("❌ Не удалось создать счёт в Stars. Попробуйте другой способ оплаты.")
+            await state.clear()
+
+    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_stars")
+    async def topup_stars_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Готовлю счёт в Telegram Stars...")
+        data = await state.get_data()
+        user_id = callback.from_user.id
+        amount_rub = Decimal(str(data.get('topup_amount', 0)))
+        if amount_rub <= 0:
+            await callback.message.edit_text("❌ Некорректная сумма пополнения.")
+            await state.clear()
+            return
+        try:
+            stars_ratio_raw = get_setting("stars_per_rub") or '0'
+            stars_ratio = Decimal(stars_ratio_raw)
+        except Exception:
+            stars_ratio = Decimal('0')
+        if stars_ratio <= 0:
+            await callback.message.edit_text("❌ Оплата в Stars временно недоступна.")
+            await state.clear()
+            return
+        stars_amount = int((amount_rub * stars_ratio).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+        if stars_amount <= 0:
+            stars_amount = 1
+        payment_id = str(uuid.uuid4())
+        metadata = {
+            "user_id": user_id,
+            "price": float(amount_rub),
+            "action": "top_up",
+            "payment_method": "Telegram Stars",
+            "payment_id": payment_id,
+        }
+        create_pending_transaction(payment_id, user_id, float(amount_rub), metadata)
+        try:
+            await callback.message.answer_invoice(
+                title="Пополнение баланса",
+                description=f"Пополнение на {amount_rub:.2f} RUB",
+                prices=[LabeledPrice(label="Пополнение", amount=stars_amount)],
+                payload=payment_id,
+                currency="XTR",
+            )
+            await state.clear()
+        except Exception as e:
+            logger.error(f"Failed to create Stars topup invoice: {e}")
+            await callback.message.edit_text("❌ Не удалось создать счёт в Stars.")
+            await state.clear()
+
+    # Пре-чек Stars: подтверждаем все инвойсы
+    @user_router.pre_checkout_query()
+    async def pre_checkout_handler(pre_checkout_q: PreCheckoutQuery):
+        try:
+            await pre_checkout_q.answer(ok=True)
+        except Exception:
+            pass
+
+    # Успешная оплата Stars: обрабатываем payload как payment_id
+    @user_router.message(F.successful_payment)
+    async def stars_success_handler(message: types.Message, bot: Bot):
+        try:
+            payload = message.successful_payment.invoice_payload if message.successful_payment else None
+        except Exception:
+            payload = None
+        if not payload:
+            return
+        metadata = find_and_complete_pending_transaction(payload)
+        if not metadata:
+            logger.warning(f"Stars payment: metadata not found for payload {payload}")
+            return
+        await process_successful_payment(bot, metadata)
+
+    # --- YooMoney ---
+    def _build_yoomoney_link(receiver: str, amount_rub: Decimal, label: str) -> str:
+        base = "https://yoomoney.ru/quickpay/confirm.xml"
+        params = {
+            "receiver": receiver,
+            "sum": f"{amount_rub:.2f}",
+            "label": label,
+            "successURL": f"https://t.me/{TELEGRAM_BOT_USERNAME}",
+        }
+        return base + "?" + urlencode(params)
+
+    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_yoomoney")
+    async def pay_yoomoney_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Готовлю ссылку YooMoney...")
+        data = await state.get_data()
+        plan = get_plan_by_id(data.get('plan_id'))
+        if not plan:
+            await callback.message.edit_text("❌ Ошибка: Тариф не найден.")
+            await state.clear()
+            return
+        wallet = get_setting("yoomoney_wallet")
+        secret = get_setting("yoomoney_secret")
+        if not wallet or not secret:
+            await callback.message.edit_text("❌ YooMoney временно недоступен.")
+            await state.clear()
+            return
+        price_rub = Decimal(str(data.get('final_price', plan['price'])))
+        user_id = callback.from_user.id
+        payment_id = str(uuid.uuid4())
+        metadata = {
+            "user_id": user_id,
+            "months": int(plan['months']),
+            "price": float(price_rub),
+            "action": data.get('action'),
+            "key_id": data.get('key_id'),
+            "host_name": data.get('host_name'),
+            "plan_id": data.get('plan_id'),
+            "customer_email": data.get('customer_email'),
+            "payment_method": "YooMoney",
+            "payment_id": payment_id,
+        }
+        create_pending_transaction(payment_id, user_id, float(price_rub), metadata)
+        pay_url = _build_yoomoney_link(wallet, price_rub, payment_id)
+        await callback.message.edit_text(
+            "Нажмите на кнопку ниже для оплаты:",
+            reply_markup=keyboards.create_payment_keyboard(pay_url)
+        )
+        await state.clear()
+
+    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_yoomoney")
+    async def topup_yoomoney_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Готовлю YooMoney...")
+        data = await state.get_data()
+        amount_rub = Decimal(str(data.get('topup_amount', 0)))
+        wallet = get_setting("yoomoney_wallet")
+        secret = get_setting("yoomoney_secret")
+        if not wallet or not secret or amount_rub <= 0:
+            await callback.message.edit_text("❌ YooMoney временно недоступен.")
+            await state.clear()
+            return
+        user_id = callback.from_user.id
+        payment_id = str(uuid.uuid4())
+        metadata = {
+            "user_id": user_id,
+            "price": float(amount_rub),
+            "action": "top_up",
+            "payment_method": "YooMoney",
+            "payment_id": payment_id,
+        }
+        create_pending_transaction(payment_id, user_id, float(amount_rub), metadata)
+        pay_url = _build_yoomoney_link(wallet, amount_rub, payment_id)
+        await callback.message.edit_text(
+            "Нажмите на кнопку ниже для оплаты:",
+            reply_markup=keyboards.create_payment_keyboard(pay_url)
+        )
+        await state.clear()
     @user_router.callback_query(TopUpProcess.waiting_for_topup_method, (F.data == "topup_pay_cryptobot") | (F.data == "topup_pay_heleket"))
     async def topup_pay_heleket_like(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Создаю счёт...")
@@ -1521,7 +1727,9 @@ def get_user_router() -> Router:
                         "description": f"Подписка на {months} мес.",
                         "quantity": "1.00",
                         "amount": {"value": price_str_for_api, "currency": "RUB"},
-                        "vat_code": "1"
+                        "vat_code": "1",
+                        "payment_subject": "service",
+                        "payment_mode": "full_payment"
                     }]
                 }
             payment_payload = {
