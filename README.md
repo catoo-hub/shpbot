@@ -261,8 +261,8 @@ docker-compose down && docker-compose up -d --build
 Нашли баг или есть идея? Создайте Issue или пришлите Pull Request. Также можно связаться: [@tweopi](https://t.me/tweopi)
 
 ## 💎 Поддержать разработку
-**СБП/Карта РФ:** https://yookassa.ru/my/i/aJiSmSUeUie5/l
-**Т-Банк:** https://tbank.ru/cf/1JpNWKAFzqR
+**СБП/Карта РФ:** [Нажать чтобы поддержать](https://yookassa.ru/my/i/aJiSmSUeUie5/l)
+**Т-Банк:**[Нажать чтобы поддержать](https://tbank.ru/cf/1JpNWKAFzqR)
 
 ## Поддержка по проекту
 Техподдержка и сообщество: [t_shift_supportbot](https://t.me/t_shift_supportbot)
