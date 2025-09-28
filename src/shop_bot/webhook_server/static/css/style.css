@@ -551,6 +551,10 @@ h4 {
     position: relative;
 }
 
+.password-wrapper .d-flex {
+    position: relative; /* anchor for the absolute eye button */
+}
+
 .password-wrapper input[type='password'],
 .password-wrapper input[type='text'] {
     padding-right: 44px; /* пространство под кнопку глаза */
@@ -558,8 +562,9 @@ h4 {
 
 .toggle-password {
     position: absolute;
-    bottom: 8px; /* перемещаем ниже, к углу */
+    top: 50%;
     right: 10px;
+    transform: translateY(-50%);
     width: 26px;
     height: 26px;
     display: flex;

@@ -302,6 +302,17 @@ def create_payment_method_keyboard(
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
+    # Подтягиваем актуальные настройки, чтобы изменения в панели применялись без рестарта бота
+    pm = {
+        "yookassa": bool((get_setting("yookassa_shop_id") or "") and (get_setting("yookassa_secret_key") or "")),
+        "heleket": bool((get_setting("heleket_merchant_id") or "") and (get_setting("heleket_api_key") or "")),
+        "cryptobot": bool(get_setting("cryptobot_token") or ""),
+        "tonconnect": bool((get_setting("ton_wallet_address") or "") and (get_setting("tonapi_key") or "")),
+        "yoomoney": ((get_setting("yoomoney_enabled") or "false").strip().lower() == "true"),
+        # Stars вычисляем по флагу; детальная проверка коэффициента делается далее в хендлерах
+        "stars": ((get_setting("stars_enabled") or "false").strip().lower() == "true"),
+    }
+
     # Кнопки оплаты с балансов (если разрешено/достаточно средств)
     if show_balance:
         label = "💼 Оплатить с баланса"
@@ -313,22 +324,22 @@ def create_payment_method_keyboard(
         builder.button(text=label, callback_data="pay_balance")
 
     # Внешние способы оплаты
-    if payment_methods and payment_methods.get("yookassa"):
+    if pm.get("yookassa"):
         if get_setting("sbp_enabled"):
             builder.button(text="🏦 СБП / Банковская карта", callback_data="pay_yookassa")
         else:
             builder.button(text="🏦 Банковская карта", callback_data="pay_yookassa")
-    if payment_methods and payment_methods.get("heleket"):
+    if pm.get("heleket"):
         builder.button(text="💎 Криптовалюта", callback_data="pay_heleket")
-    if payment_methods and payment_methods.get("cryptobot"):
+    if pm.get("cryptobot"):
         builder.button(text="🤖 CryptoBot", callback_data="pay_cryptobot")
-    if payment_methods and payment_methods.get("tonconnect"):
+    if pm.get("tonconnect"):
         callback_data_ton = "pay_tonconnect"
         logger.info(f"Creating TON button with callback_data: '{callback_data_ton}'")
         builder.button(text="🪙 TON Connect", callback_data=callback_data_ton)
-    if payment_methods and payment_methods.get("stars"):
+    if pm.get("stars"):
         builder.button(text="⭐ Telegram Stars", callback_data="pay_stars")
-    if payment_methods and payment_methods.get("yoomoney"):
+    if pm.get("yoomoney"):
         builder.button(text="💜 YooMoney", callback_data="pay_yoomoney")
 
     builder.button(text="⬅️ Назад", callback_data="back_to_email_prompt")
@@ -359,21 +370,30 @@ def create_yoomoney_payment_keyboard(payment_url: str, payment_id: str) -> Inlin
 
 def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    # Подтягиваем актуальные настройки
+    pm = {
+        "yookassa": bool((get_setting("yookassa_shop_id") or "") and (get_setting("yookassa_secret_key") or "")),
+        "heleket": bool((get_setting("heleket_merchant_id") or "") and (get_setting("heleket_api_key") or "")),
+        "cryptobot": bool(get_setting("cryptobot_token") or ""),
+        "tonconnect": bool((get_setting("ton_wallet_address") or "") and (get_setting("tonapi_key") or "")),
+        "yoomoney": ((get_setting("yoomoney_enabled") or "false").strip().lower() == "true"),
+        "stars": ((get_setting("stars_enabled") or "false").strip().lower() == "true"),
+    }
     # Только внешние способы оплаты, без оплаты с баланса
-    if payment_methods and payment_methods.get("yookassa"):
+    if pm.get("yookassa"):
         if get_setting("sbp_enabled"):
             builder.button(text="🏦 СБП / Банковская карта", callback_data="topup_pay_yookassa")
         else:
             builder.button(text="🏦 Банковская карта", callback_data="topup_pay_yookassa")
-    if payment_methods and payment_methods.get("heleket"):
+    if pm.get("heleket"):
         builder.button(text="💎 Криптовалюта", callback_data="topup_pay_heleket")
-    if payment_methods and payment_methods.get("cryptobot"):
+    if pm.get("cryptobot"):
         builder.button(text="🤖 CryptoBot", callback_data="topup_pay_cryptobot")
-    if payment_methods and payment_methods.get("tonconnect"):
+    if pm.get("tonconnect"):
         builder.button(text="🪙 TON Connect", callback_data="topup_pay_tonconnect")
-    if payment_methods and payment_methods.get("stars"):
+    if pm.get("stars"):
         builder.button(text="⭐ Telegram Stars", callback_data="topup_pay_stars")
-    if payment_methods and payment_methods.get("yoomoney"):
+    if pm.get("yoomoney"):
         builder.button(text="💜 YooMoney", callback_data="topup_pay_yoomoney")
 
     builder.button(text="⬅️ Назад", callback_data="show_profile")
