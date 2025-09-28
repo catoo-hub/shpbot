@@ -724,6 +724,19 @@
 							</div>
 						</div>
 
+						<div class="mb-3">
+							<label class="form-label" for="yoomoney_wallet">Номер кошелька YooMoney</label>
+							<input class="form-control" type="text" id="yoomoney_wallet" name="yoomoney_wallet" value="{{ settings.yoomoney_wallet or '' }}" />
+						</div>
+						<div class="mb-3 password-wrapper">
+							<label class="form-label" for="yoomoney_secret">Секрет HTTP-уведомлений</label>
+							<div class="d-flex gap-2">
+								<input class="form-control" type="password" id="yoomoney_secret" name="yoomoney_secret" value="{{ settings.yoomoney_secret or '' }}" />
+								<button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
+							</div>
+							<div class="form-text">Укажите этот секрет при настройке HTTP-уведомлений в кабинете YooMoney. URL уведомлений: <code>{{ request.url_root.rstrip('/') }}/yoomoney-webhook</code></div>
+						</div>
+
 						<div class="mb-3 password-wrapper">
 							<label class="form-label" for="yoomoney_api_token">YooMoney API Token (OAuth access_token)</label>
 							<div class="d-flex gap-2">
