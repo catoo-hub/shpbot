@@ -717,16 +717,11 @@
 
 						<h3 class="h4 mt-3">Настройка YooMoney (кошелёк)</h3>
 						<div class="mb-3">
-							<label class="form-label" for="yoomoney_wallet">Номер кошелька YooMoney</label>
-							<input class="form-control" type="text" id="yoomoney_wallet" name="yoomoney_wallet" value="{{ settings.yoomoney_wallet or '' }}" />
-						</div>
-						<div class="mb-3 password-wrapper">
-							<label class="form-label" for="yoomoney_secret">Секрет HTTP-уведомлений</label>
-							<div class="d-flex gap-2">
-								<input class="form-control" type="password" id="yoomoney_secret" name="yoomoney_secret" value="{{ settings.yoomoney_secret or '' }}" />
-								<button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
+							<input type="hidden" name="yoomoney_enabled" value="false" />
+							<div class="form-check">
+								<input class="form-check-input" type="checkbox" id="yoomoney_enabled" name="yoomoney_enabled" value="true" {% if settings.yoomoney_enabled == 'true' %}checked{% endif %}>
+								<label class="form-check-label" for="yoomoney_enabled">Включить YooMoney</label>
 							</div>
-							<div class="form-text">Укажите этот секрет при настройке HTTP-уведомлений в кабинете YooMoney. URL уведомлений: <code>{{ request.url_root.rstrip('/') }}/yoomoney-webhook</code></div>
 						</div>
 
 						<div class="mb-3 password-wrapper">
@@ -741,18 +736,6 @@
 						<div class="mb-3">
 							<label class="form-label" for="yoomoney_client_id">YooMoney client_id (для OAuth)</label>
 							<input class="form-control" type="text" id="yoomoney_client_id" name="yoomoney_client_id" value="{{ settings.yoomoney_client_id or '' }}" />
-						</div>
-						<div class="mb-3 password-wrapper">
-							<label class="form-label" for="yoomoney_client_secret">YooMoney client_secret (если требуется)</label>
-							<div class="d-flex gap-2">
-								<input class="form-control" type="password" id="yoomoney_client_secret" name="yoomoney_client_secret" value="{{ settings.yoomoney_client_secret or '' }}" />
-								<button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
-							</div>
-						</div>
-						<div class="mb-3">
-							<label class="form-label" for="yoomoney_redirect_uri">Redirect URI (для OAuth)</label>
-							<input class="form-control" type="url" id="yoomoney_redirect_uri" name="yoomoney_redirect_uri" value="{{ settings.yoomoney_redirect_uri or '' }}" placeholder="https://example.com/yoomoney/callback" />
-							<div class="form-text text-secondary">Если не заполнено — будет использован URL панели: {{ request.url_root.rstrip('/') }}/yoomoney/callback</div>
 						</div>
 						<div class="mb-3 d-flex flex-wrap gap-2">
 							<a class="btn btn-outline-primary" href="{{ url_for('yoomoney_connect_route') }}">Подключить YooMoney (OAuth)</a>

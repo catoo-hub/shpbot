@@ -325,6 +325,7 @@ def initialize_db():
                 "btn_back_to_menu_text": None,
                 # Payments: YooMoney and Telegram Stars
                 "stars_enabled": "false",
+                "yoomoney_enabled": "false",
                 "yoomoney_wallet": None,
                 "yoomoney_secret": None,
                 # Optional YooMoney OAuth flow support

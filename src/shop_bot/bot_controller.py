@@ -98,16 +98,15 @@ class BotController:
 
             heleket_shop_id = rw_repo.get_setting("heleket_merchant_id")
             heleket_api_key = rw_repo.get_setting("heleket_api_key")
-            heleket_enabled = bool(heleket_api_key and heleket_shop_id)
-            
             ton_wallet_address = rw_repo.get_setting("ton_wallet_address")
             tonapi_key = rw_repo.get_setting("tonapi_key")
             tonconnect_enabled = bool(ton_wallet_address and tonapi_key)
 
-            # YooMoney availability: require wallet and secret
+            # YooMoney availability: require explicit toggle + wallet and secret
             yoomoney_wallet = (rw_repo.get_setting("yoomoney_wallet") or '').strip()
             yoomoney_secret = (rw_repo.get_setting("yoomoney_secret") or '').strip()
-            yoomoney_enabled = bool(yoomoney_wallet and yoomoney_secret)
+            yoomoney_flag = (rw_repo.get_setting("yoomoney_enabled") or 'false').strip().lower() == 'true'
+            yoomoney_enabled = bool(yoomoney_flag and yoomoney_wallet and yoomoney_secret)
 
             # Telegram Stars availability: require explicit enable flag and positive conversion ratio
             stars_flag = (rw_repo.get_setting("stars_enabled") or 'false').strip().lower() == 'true'

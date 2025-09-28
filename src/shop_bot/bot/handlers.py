@@ -1636,15 +1636,65 @@ def get_user_router() -> Router:
     async def back_to_plans_handler(callback: types.CallbackQuery, state: FSMContext):
         data = await state.get_data()
         await state.clear()
-        
-        action = data.get('action')
+        action = (data.get('action') or '').strip()
 
+        # Re-open the plans list depending on action
         if action == 'new':
-            await buy_new_key_handler(callback)
-        elif action == 'extend':
-            await extend_key_handler(callback)
-        else:
-            await back_to_main_menu_handler(callback)
+            host_name = data.get('host_name') or ''
+            if not host_name:
+                await callback.message.edit_text(
+                    "❌ Не удалось определить сервер. Вернитесь в меню.",
+                    reply_markup=keyboards.create_back_to_menu_keyboard()
+                )
+                return
+            plans = get_plans_for_host(host_name)
+            if not plans:
+                await callback.message.edit_text(f"❌ Для сервера \"{host_name}\" не настроены тарифы.")
+                return
+            await callback.message.edit_text(
+                "Выберите тариф для нового ключа:",
+                reply_markup=keyboards.create_plans_keyboard(plans, action="new", host_name=host_name)
+            )
+            return
+
+        if action == 'extend':
+            try:
+                key_id = int(data.get('key_id') or 0)
+            except Exception:
+                key_id = 0
+            if key_id <= 0:
+                await callback.message.edit_text(
+                    "❌ Не удалось определить ключ для продления.",
+                    reply_markup=keyboards.create_back_to_menu_keyboard()
+                )
+                return
+            key_data = rw_repo.get_key_by_id(key_id)
+            if not key_data or key_data.get('user_id') != callback.from_user.id:
+                await callback.message.edit_text("❌ Ошибка: Ключ не найден или не принадлежит вам.")
+                return
+            host_name = key_data.get('host_name')
+            if not host_name:
+                await callback.message.edit_text("❌ Ошибка: У этого ключа не указан сервер. Обратитесь в поддержку.")
+                return
+            plans = get_plans_for_host(host_name)
+            if not plans:
+                await callback.message.edit_text(
+                    f"❌ Извините, для сервера \"{host_name}\" в данный момент не настроены тарифы для продления."
+                )
+                return
+            await callback.message.edit_text(
+                f"Выберите тариф для продления ключа на сервере \"{host_name}\":",
+                reply_markup=keyboards.create_plans_keyboard(
+                    plans=plans,
+                    action="extend",
+                    host_name=host_name,
+                    key_id=key_id
+                )
+            )
+            return
+
+        # Fallback
+        await back_to_main_menu_handler(callback)
 
     @user_router.message(PaymentProcess.waiting_for_email)
     async def process_email_handler(message: types.Message, state: FSMContext):
