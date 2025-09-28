@@ -639,11 +639,6 @@ def get_user_router() -> Router:
             # Не фиксируем paymentType, чтобы YooMoney сам предложил доступные способы (исключает ошибки у некоторых кошельков)
         }
         url = base + "?" + urlencode(params)
-        try:
-            masked = f"***{(receiver or '').strip()[-4:]}"
-            logger.info(f"YooMoney quickpay link prepared for receiver {masked}: {url}")
-        except Exception:
-            pass
         return url
 
     @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_yoomoney")
@@ -732,7 +727,7 @@ def get_user_router() -> Router:
         await state.clear()
 
     @user_router.callback_query(F.data.startswith("check_pending:"))
-    async def check_pending_payment_handler(callback: types.CallbackQuery):
+    async def check_pending_payment_handler(callback: types.CallbackQuery, bot: Bot):
         try:
             pid = callback.data.split(":", 1)[1]
         except Exception:
@@ -743,12 +738,58 @@ def get_user_router() -> Router:
         except Exception as e:
             logger.error(f"check_pending failed for {pid}: {e}")
             status = ""
-        if not status:
-            await callback.answer("❌ Платёж не найден. Проверьте позже.", show_alert=True)
-            return
-        if status.lower() == 'paid':
+        if status and status.lower() == 'paid':
             await callback.answer("✅ Оплата получена! Профиль/баланс скоро обновится.", show_alert=True)
-        else:
+            return
+
+        # Если ещё pending — попробуем проверить через OAuth operation-history по метке
+        token = (get_setting('yoomoney_api_token') or '').strip()
+        if not token:
+            # Нет токена для проверки — только локальный статус
+            if not status:
+                await callback.answer("❌ Платёж не найден. Проверьте позже.", show_alert=True)
+            else:
+                await callback.answer("⏳ Оплата ещё не поступила. Попробуйте через минуту.", show_alert=True)
+            return
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                data = {"label": pid, "records": "10"}
+                headers = {"Authorization": f"Bearer {token}"}
+                async with session.post("https://yoomoney.ru/api/operation-history", data=data, headers=headers, timeout=15) as resp:
+                    text = await resp.text()
+                    if resp.status != 200:
+                        await callback.answer("⚠️ Не удалось проверить оплату через YooMoney. Попробуйте позже.", show_alert=True)
+                        return
+        except Exception:
+            await callback.answer("⚠️ Ошибка связи с YooMoney. Попробуйте позже.", show_alert=True)
+            return
+            try:
+                payload = json.loads(text)
+            except Exception:
+                payload = {}
+            ops = payload.get('operations') or []
+            paid = False
+            for op in ops:
+                try:
+                    if str(op.get('label')) == pid and str(op.get('status','')).lower() in {"success","done"}:
+                        paid = True
+                        break
+                except Exception:
+                    continue
+            if paid:
+                try:
+                    metadata = find_and_complete_pending_transaction(pid)
+                except Exception:
+                    metadata = None
+                if metadata:
+                    try:
+                        await process_successful_payment(bot, metadata)
+                    except Exception as e:
+                        logger.warning(f"process_successful_payment failed after YM check: {e}")
+                await callback.answer("✅ Оплата получена! Профиль/баланс скоро обновится.", show_alert=True)
+                return
+            # Иначе
             await callback.answer("⏳ Оплата ещё не поступила. Попробуйте через минуту.", show_alert=True)
     @user_router.callback_query(TopUpProcess.waiting_for_topup_method, (F.data == "topup_pay_cryptobot") | (F.data == "topup_pay_heleket"))
     async def topup_pay_heleket_like(callback: types.CallbackQuery, state: FSMContext):

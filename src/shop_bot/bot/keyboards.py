@@ -340,7 +340,7 @@ def create_payment_method_keyboard(
     if pm.get("stars"):
         builder.button(text="⭐ Telegram Stars", callback_data="pay_stars")
     if pm.get("yoomoney"):
-        builder.button(text="💜 YooMoney", callback_data="pay_yoomoney")
+        builder.button(text="💜 ЮMoney (кошелёк)", callback_data="pay_yoomoney")
 
     builder.button(text="⬅️ Назад", callback_data="back_to_email_prompt")
     builder.adjust(1)
@@ -394,7 +394,7 @@ def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboar
     if pm.get("stars"):
         builder.button(text="⭐ Telegram Stars", callback_data="topup_pay_stars")
     if pm.get("yoomoney"):
-        builder.button(text="💜 YooMoney", callback_data="topup_pay_yoomoney")
+        builder.button(text="💜 ЮMoney (кошелёк)", callback_data="topup_pay_yoomoney")
 
     builder.button(text="⬅️ Назад", callback_data="show_profile")
     builder.adjust(1)
