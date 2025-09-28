@@ -54,6 +54,8 @@ from shop_bot.data_manager.remnawave_repository import (
     find_and_complete_pending_transaction,
     get_latest_pending_for_user,
     create_payload_pending,
+    get_pending_status,
+    get_pending_metadata,
 )
 
 from shop_bot.config import (
@@ -667,7 +669,7 @@ def get_user_router() -> Router:
         pay_url = _build_yoomoney_link(wallet, price_rub, payment_id)
         await callback.message.edit_text(
             "Нажмите на кнопку ниже для оплаты:",
-            reply_markup=keyboards.create_payment_keyboard(pay_url)
+            reply_markup=keyboards.create_yoomoney_payment_keyboard(pay_url, payment_id)
         )
         await state.clear()
 
@@ -695,9 +697,29 @@ def get_user_router() -> Router:
         pay_url = _build_yoomoney_link(wallet, amount_rub, payment_id)
         await callback.message.edit_text(
             "Нажмите на кнопку ниже для оплаты:",
-            reply_markup=keyboards.create_payment_keyboard(pay_url)
+            reply_markup=keyboards.create_yoomoney_payment_keyboard(pay_url, payment_id)
         )
         await state.clear()
+
+    @user_router.callback_query(F.data.startswith("check_pending:"))
+    async def check_pending_payment_handler(callback: types.CallbackQuery):
+        try:
+            pid = callback.data.split(":", 1)[1]
+        except Exception:
+            await callback.answer("Некорректный идентификатор платежа.", show_alert=True)
+            return
+        try:
+            status = get_pending_status(pid) or ""
+        except Exception as e:
+            logger.error(f"check_pending failed for {pid}: {e}")
+            status = ""
+        if not status:
+            await callback.answer("❌ Платёж не найден. Проверьте позже.", show_alert=True)
+            return
+        if status.lower() == 'paid':
+            await callback.answer("✅ Оплата получена! Профиль/баланс скоро обновится.", show_alert=True)
+        else:
+            await callback.answer("⏳ Оплата ещё не поступила. Попробуйте через минуту.", show_alert=True)
     @user_router.callback_query(TopUpProcess.waiting_for_topup_method, (F.data == "topup_pay_cryptobot") | (F.data == "topup_pay_heleket"))
     async def topup_pay_heleket_like(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Создаю счёт...")

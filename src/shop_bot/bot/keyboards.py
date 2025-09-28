@@ -349,6 +349,14 @@ def create_payment_keyboard(payment_url: str) -> InlineKeyboardMarkup:
     builder.adjust(1)
     return builder.as_markup()
 
+def create_yoomoney_payment_keyboard(payment_url: str, payment_id: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Перейти к оплате", url=payment_url)
+    builder.button(text="🔄 Проверить оплату", callback_data=f"check_pending:{payment_id}")
+    builder.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
 def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     # Только внешние способы оплаты, без оплаты с баланса

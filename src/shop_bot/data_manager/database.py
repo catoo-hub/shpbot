@@ -327,6 +327,11 @@ def initialize_db():
                 "stars_enabled": "false",
                 "yoomoney_wallet": None,
                 "yoomoney_secret": None,
+                # Optional YooMoney OAuth flow support
+                "yoomoney_api_token": None,
+                "yoomoney_client_id": None,
+                "yoomoney_client_secret": None,
+                "yoomoney_redirect_uri": None,
                 "stars_per_rub": "1",
             }
             run_migration()
@@ -1373,6 +1378,41 @@ def _get_pending_metadata(payment_id: str) -> dict | None:
             return meta
     except sqlite3.Error as e:
         logging.error(f"Failed to read pending transaction {payment_id}: {e}")
+        return None
+
+
+def get_pending_metadata(payment_id: str) -> dict | None:
+    """Public wrapper to fetch pending metadata by payment_id WITHOUT marking it paid.
+    Returns metadata dict or None if not found.
+    """
+    return _get_pending_metadata(payment_id)
+
+
+def get_pending_status(payment_id: str) -> str | None:
+    """Return status of pending transaction: 'pending', 'paid', or None if not found."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            # Ensure table exists
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pending_transactions (
+                    payment_id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    amount_rub REAL,
+                    metadata TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute("SELECT status FROM pending_transactions WHERE payment_id = ?", (payment_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return (row[0] or '').strip() or None
+    except sqlite3.Error as e:
+        logging.error(f"Failed to get status for pending {payment_id}: {e}")
         return None
 
 def _complete_pending(payment_id: str) -> bool:

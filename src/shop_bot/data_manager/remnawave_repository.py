@@ -236,6 +236,8 @@ _LEGACY_FORWARDERS = (
     "find_and_complete_ton_transaction",
     "find_and_complete_pending_transaction",
     "get_latest_pending_for_user",
+    "get_pending_status",
+    "get_pending_metadata",
     "get_admin_ids",
     "get_admin_stats",
     "get_all_hosts",
