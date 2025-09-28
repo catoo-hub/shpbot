@@ -755,7 +755,11 @@ def get_user_router() -> Router:
         try:
             async with aiohttp.ClientSession() as session:
                 data = {"label": pid, "records": "10"}
-                headers = {"Authorization": f"Bearer {token}"}
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                }
                 async with session.post("https://yoomoney.ru/api/operation-history", data=data, headers=headers, timeout=15) as resp:
                     text = await resp.text()
                     if resp.status != 200:
@@ -764,33 +768,33 @@ def get_user_router() -> Router:
         except Exception:
             await callback.answer("⚠️ Ошибка связи с YooMoney. Попробуйте позже.", show_alert=True)
             return
+        try:
+            payload = json.loads(text)
+        except Exception:
+            payload = {}
+        ops = payload.get('operations') or []
+        paid = False
+        for op in ops:
             try:
-                payload = json.loads(text)
+                if str(op.get('label')) == pid and str(op.get('status','')).lower() in {"success","done"}:
+                    paid = True
+                    break
             except Exception:
-                payload = {}
-            ops = payload.get('operations') or []
-            paid = False
-            for op in ops:
+                continue
+        if paid:
+            try:
+                metadata = find_and_complete_pending_transaction(pid)
+            except Exception:
+                metadata = None
+            if metadata:
                 try:
-                    if str(op.get('label')) == pid and str(op.get('status','')).lower() in {"success","done"}:
-                        paid = True
-                        break
-                except Exception:
-                    continue
-            if paid:
-                try:
-                    metadata = find_and_complete_pending_transaction(pid)
-                except Exception:
-                    metadata = None
-                if metadata:
-                    try:
-                        await process_successful_payment(bot, metadata)
-                    except Exception as e:
-                        logger.warning(f"process_successful_payment failed after YM check: {e}")
-                await callback.answer("✅ Оплата получена! Профиль/баланс скоро обновится.", show_alert=True)
-                return
-            # Иначе
-            await callback.answer("⏳ Оплата ещё не поступила. Попробуйте через минуту.", show_alert=True)
+                    await process_successful_payment(bot, metadata)
+                except Exception as e:
+                    logger.warning(f"process_successful_payment failed after YM check: {e}")
+            await callback.answer("✅ Оплата получена! Профиль/баланс скоро обновится.", show_alert=True)
+            return
+        # Иначе
+        await callback.answer("⏳ Оплата ещё не поступила. Попробуйте через минуту.", show_alert=True)
     @user_router.callback_query(TopUpProcess.waiting_for_topup_method, (F.data == "topup_pay_cryptobot") | (F.data == "topup_pay_heleket"))
     async def topup_pay_heleket_like(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Создаю счёт...")
