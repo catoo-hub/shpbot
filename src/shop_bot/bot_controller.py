@@ -101,6 +101,7 @@ class BotController:
             ton_wallet_address = rw_repo.get_setting("ton_wallet_address")
             tonapi_key = rw_repo.get_setting("tonapi_key")
             tonconnect_enabled = bool(ton_wallet_address and tonapi_key)
+            heleket_enabled = bool(heleket_shop_id and heleket_api_key)
 
             # YooMoney availability: require explicit toggle + wallet and secret
             yoomoney_wallet = (rw_repo.get_setting("yoomoney_wallet") or '').strip()
