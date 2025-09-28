@@ -628,12 +628,23 @@ def get_user_router() -> Router:
     def _build_yoomoney_link(receiver: str, amount_rub: Decimal, label: str) -> str:
         base = "https://yoomoney.ru/quickpay/confirm.xml"
         params = {
-            "receiver": receiver,
+            "receiver": (receiver or "").strip(),
+            "quickpay-form": "donate",  # P2P форма для перевода на кошелек
+            "targets": "Оплата подписки",
+            "formcomment": "Оплата подписки",
+            "short-dest": "Оплата подписки",
             "sum": f"{amount_rub:.2f}",
             "label": label,
             "successURL": f"https://t.me/{TELEGRAM_BOT_USERNAME}",
+            # Не фиксируем paymentType, чтобы YooMoney сам предложил доступные способы (исключает ошибки у некоторых кошельков)
         }
-        return base + "?" + urlencode(params)
+        url = base + "?" + urlencode(params)
+        try:
+            masked = f"***{(receiver or '').strip()[-4:]}"
+            logger.info(f"YooMoney quickpay link prepared for receiver {masked}: {url}")
+        except Exception:
+            pass
+        return url
 
     @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_yoomoney")
     async def pay_yoomoney_handler(callback: types.CallbackQuery, state: FSMContext):
@@ -650,7 +661,17 @@ def get_user_router() -> Router:
             await callback.message.edit_text("❌ YooMoney временно недоступен.")
             await state.clear()
             return
+        # Валидация кошелька (обычно начинается с 410 и состоит из цифр)
+        w = (wallet or "").strip()
+        if not (w.isdigit() and len(w) >= 11):
+            await callback.message.edit_text("❌ Некорректный номер кошелька YooMoney. Проверьте в панели настроек.")
+            await state.clear()
+            return
         price_rub = Decimal(str(data.get('final_price', plan['price'])))
+        if price_rub < Decimal("1.00"):
+            await callback.message.edit_text("❌ Минимальная сумма перевода YooMoney — 1 RUB. Выберите другой тариф или способ оплаты.")
+            await state.clear()
+            return
         user_id = callback.from_user.id
         payment_id = str(uuid.uuid4())
         metadata = {
@@ -682,6 +703,15 @@ def get_user_router() -> Router:
         secret = get_setting("yoomoney_secret")
         if not wallet or not secret or amount_rub <= 0:
             await callback.message.edit_text("❌ YooMoney временно недоступен.")
+            await state.clear()
+            return
+        w = (wallet or "").strip()
+        if not (w.isdigit() and len(w) >= 11):
+            await callback.message.edit_text("❌ Некорректный номер кошелька YooMoney. Проверьте в панели настроек.")
+            await state.clear()
+            return
+        if amount_rub < Decimal("1.00"):
+            await callback.message.edit_text("❌ Минимальная сумма перевода YooMoney — 1 RUB. Введите сумму побольше.")
             await state.clear()
             return
         user_id = callback.from_user.id
