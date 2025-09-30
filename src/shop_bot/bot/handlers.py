@@ -70,6 +70,266 @@ CRYPTO_BOT_TOKEN = get_setting("cryptobot_token")
 
 logger = logging.getLogger(__name__)
 
+async def _create_heleket_payment_request(
+    user_id: int,
+    price: float,
+    months: int,
+    host_name: str | None,
+    state_data: dict,
+) -> str | None:
+    """
+    Создание инвойса в Heleket и возврат payment URL.
+
+    Требования API:
+      - POST https://api.heleket.com/v1/payment
+      - Заголовки: merchant, sign (md5(base64(json_body)+API_KEY))
+      - Тело (минимум): { amount, currency, order_id }
+      - Дополнительно: url_callback (наш вебхук), description (положим JSON метаданных)
+    """
+    # Подготовим ключи и проверим настройки
+    merchant_id = (get_setting("heleket_merchant_id") or "").strip()
+    api_key = (get_setting("heleket_api_key") or "").strip()
+    if not (merchant_id and api_key):
+        logger.error("Heleket: не заданы merchant_id/api_key в настройках.")
+        return None
+
+    # payment_id используем как order_id; параллельно сохраним pending по нему
+    payment_id = str(uuid.uuid4())
+
+    # Соберём metadata, на которое полагается обработка оплаты
+    metadata = {
+        "user_id": int(user_id),
+        "months": int(months or 0),
+        "price": float(Decimal(str(price)).quantize(Decimal("0.01"))),
+        "action": state_data.get("action"),
+        "key_id": state_data.get("key_id"),
+        "host_name": host_name or state_data.get("host_name"),
+        "plan_id": state_data.get("plan_id"),
+        "customer_email": state_data.get("customer_email"),
+        "payment_method": "Heleket",
+        "payment_id": payment_id,
+    }
+
+    # Сохраняем pending — даже если вебхук вернёт полное описание, фолбэк не помешает
+    try:
+        create_payload_pending(payment_id, user_id, float(metadata["price"]), metadata)
+    except Exception as e:
+        logger.warning(f"Heleket: не удалось создать pending: {e}")
+
+    # Соберём тело запроса Heleket
+    amount_str = f"{Decimal(str(price)).quantize(Decimal('0.01'))}"
+    body: dict = {
+        "amount": amount_str,
+        "currency": "RUB",  # оплачиваем в рублях; плательщик выберет криптовалюту на стороне Heleket
+        "order_id": payment_id,
+        # Передаём метаданные строкой JSON — наш вебхук читает поле 'description'
+        "description": json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
+    }
+    # Вебхук для Heleket — если указан domain в настройках
+    try:
+        domain = (get_setting("domain") or "").strip()
+    except Exception:
+        domain = ""
+    if domain:
+        # Ожидаемый путь вебхука уже реализован во Flask: '/heleket-webhook'
+        # Если domain без завершающего '/', добавим
+        cb = f"{domain.rstrip('/')}/heleket-webhook"
+        body["url_callback"] = cb
+
+    # Подпись запроса
+    body_json = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    base64_payload = base64.b64encode(body_json.encode()).decode()
+    sign = hashlib.md5((base64_payload + api_key).encode()).hexdigest()
+
+    headers = {
+        "merchant": merchant_id,
+        "sign": sign,
+        "Content-Type": "application/json",
+    }
+
+    url = "https://api.heleket.com/v1/payment"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=body, timeout=20) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    logger.error(f"Heleket: HTTP {resp.status}: {text}")
+                    return None
+                data = await resp.json(content_type=None)
+                # Успех: ожидаем state == 0 и presence of result.url
+                if isinstance(data, dict) and data.get("state") == 0:
+                    try:
+                        result = data.get("result") or {}
+                        pay_url = result.get("url")
+                        if pay_url:
+                            return pay_url
+                    except Exception:
+                        pass
+                logger.error(f"Heleket: неожиданный ответ API: {data}")
+                return None
+    except Exception as e:
+        logger.error(f"Heleket: ошибка при создании инвойса: {e}", exc_info=True)
+        return None
+
+async def _create_cryptobot_invoice(
+    user_id: int,
+    price_rub: float,
+    months: int,
+    host_name: str | None,
+    state_data: dict,
+) -> str | None:
+    """
+    Создание инвойса в Crypto Pay (CryptoBot) и возврат bot_invoice_url.
+
+    Эндпоинт: POST https://pay.crypt.bot/api/createInvoice
+    Заголовки: { 'Crypto-Pay-API-Token': <token>, 'Content-Type': 'application/json' }
+
+    Мы создаём инвойс в фиате RUB, чтобы не конвертировать курсы вручную.
+    В payload записываем строку, которую ожидает наш вебхук '/cryptobot-webhook'.
+    """
+    token = (get_setting("cryptobot_token") or "").strip()
+    if not token:
+        logger.error("CryptoBot: не указан токен API в настройках.")
+        return None
+
+    # Собираем payload строго в формате, который парсит вебхук
+    # parts: user_id:months:price:action:key_id:host_name:plan_id:customer_email:payment_method
+    action = state_data.get("action")
+    key_id = state_data.get("key_id")
+    plan_id = state_data.get("plan_id")
+    customer_email = state_data.get("customer_email")
+    pm = "CryptoBot"
+
+    # price в вебхуке строкой, оставим 2 знака после запятой
+    price_str = f"{Decimal(str(price_rub)).quantize(Decimal('0.01'))}"
+    payload_str = ":".join([
+        str(int(user_id)),
+        str(int(months or 0)),
+        price_str,
+        str(action or ""),
+        str(key_id if key_id is not None else "None"),
+        str((host_name or state_data.get('host_name') or "")),
+        str(plan_id if plan_id is not None else "None"),
+        str(customer_email if customer_email is not None else "None"),
+        pm,
+    ])
+
+    body = {
+        "amount": price_str,
+        "currency_type": "fiat",
+        "fiat": "RUB",
+        "payload": payload_str,
+        # Не ограничиваем ассеты, пусть CryptoBot предложит доступные
+        # Можно добавить: accepted_assets=["USDT", "TON", ...]
+    }
+
+    headers = {
+        "Crypto-Pay-API-Token": token,
+        "Content-Type": "application/json",
+    }
+
+    url = "https://pay.crypt.bot/api/createInvoice"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=body, timeout=20) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    logger.error(f"CryptoBot: HTTP {resp.status}: {text}")
+                    return None
+                data = await resp.json(content_type=None)
+                # Ответ Crypto Pay обычно: { ok: true, result: { invoice_id, bot_invoice_url, ... } }
+                if isinstance(data, dict) and data.get("ok") and isinstance(data.get("result"), dict):
+                    res = data["result"]
+                    pay_url = res.get("bot_invoice_url") or res.get("invoice_url")
+                    if pay_url:
+                        return pay_url
+                logger.error(f"CryptoBot: неожиданный ответ API: {data}")
+                return None
+    except Exception as e:
+        logger.error(f"CryptoBot: ошибка при создании инвойса: {e}", exc_info=True)
+        return None
+
+    # payment_id используем как order_id; параллельно сохраним pending по нему
+    payment_id = str(uuid.uuid4())
+
+    # Соберём metadata, на которое полагается обработка оплаты
+    metadata = {
+        "user_id": int(user_id),
+        "months": int(months or 0),
+        "price": float(Decimal(str(price)).quantize(Decimal("0.01"))),
+        "action": state_data.get("action"),
+        "key_id": state_data.get("key_id"),
+        "host_name": host_name or state_data.get("host_name"),
+        "plan_id": state_data.get("plan_id"),
+        "customer_email": state_data.get("customer_email"),
+        "payment_method": "Heleket",
+        "payment_id": payment_id,
+    }
+
+    # Сохраняем pending — даже если вебхук вернёт полное описание, фолбэк не помешает
+    try:
+        create_payload_pending(payment_id, user_id, float(metadata["price"]), metadata)
+    except Exception as e:
+        logger.warning(f"Heleket: не удалось создать pending: {e}")
+
+    # Соберём тело запроса Heleket
+    amount_str = f"{Decimal(str(price)).quantize(Decimal('0.01'))}"
+    body: dict = {
+        "amount": amount_str,
+        "currency": "RUB",  # оплачиваем в рублях; плательщик выберет криптовалюту на стороне Heleket
+        "order_id": payment_id,
+        # Передаём метаданные строкой JSON — наш вебхук читает поле 'description'
+        "description": json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
+    }
+    # Вебхук для Heleket — если указан domain в настройках
+    try:
+        domain = (get_setting("domain") or "").strip()
+    except Exception:
+        domain = ""
+    if domain:
+        # Ожидаемый путь вебхука уже реализован во Flask: '/heleket-webhook'
+        # Если domain без завершающего '/', добавим
+        cb = f"{domain.rstrip('/')}/heleket-webhook"
+        body["url_callback"] = cb
+
+    # Подпись запроса
+    body_json = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    base64_payload = base64.b64encode(body_json.encode()).decode()
+    sign = hashlib.md5((base64_payload + api_key).encode()).hexdigest()
+
+    headers = {
+        "merchant": merchant_id,
+        "sign": sign,
+        "Content-Type": "application/json",
+    }
+
+    url = "https://api.heleket.com/v1/payment"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=body, timeout=20) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    logger.error(f"Heleket: HTTP {resp.status}: {text}")
+                    return None
+                data = await resp.json(content_type=None)
+                # Успех: ожидаем state == 0 и presence of result.url
+                if isinstance(data, dict) and data.get("state") == 0:
+                    try:
+                        result = data.get("result") or {}
+                        pay_url = result.get("url")
+                        if pay_url:
+                            return pay_url
+                    except Exception:
+                        pass
+                logger.error(f"Heleket: неожиданный ответ API: {data}")
+                return None
+    except Exception as e:
+        logger.error(f"Heleket: ошибка при создании инвойса: {e}", exc_info=True)
+        return None
+
 class KeyPurchase(StatesGroup):
     waiting_for_host_selection = State()
     waiting_for_plan_selection = State()
@@ -795,7 +1055,7 @@ def get_user_router() -> Router:
             return
         # Иначе
         await callback.answer("⏳ Оплата ещё не поступила. Попробуйте через минуту.", show_alert=True)
-    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, (F.data == "topup_pay_cryptobot") | (F.data == "topup_pay_heleket"))
+    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_heleket")
     async def topup_pay_heleket_like(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Создаю счёт...")
         data = await state.get_data()
@@ -832,6 +1092,44 @@ def get_user_router() -> Router:
         except Exception as e:
             logger.error(f"Failed to create topup Heleket-like invoice: {e}", exc_info=True)
             await callback.message.edit_text("❌ Не удалось создать счёт. Попробуйте другой способ оплаты.")
+            await state.clear()
+
+    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_cryptobot")
+    async def topup_pay_cryptobot(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю счёт в Crypto Pay...")
+        data = await state.get_data()
+        user_id = callback.from_user.id
+        amount = float(data.get('topup_amount', 0))
+        if amount <= 0:
+            await callback.message.edit_text("❌ Некорректная сумма пополнения. Повторите ввод.")
+            await state.clear()
+            return
+        state_data = {
+            "action": "top_up",
+            "customer_email": None,
+            "plan_id": None,
+            "host_name": None,
+            "key_id": None,
+        }
+        try:
+            pay_url = await _create_cryptobot_invoice(
+                user_id=user_id,
+                price_rub=float(amount),
+                months=0,
+                host_name="",
+                state_data=state_data,
+            )
+            if pay_url:
+                await callback.message.edit_text(
+                    "Нажмите на кнопку ниже для оплаты:",
+                    reply_markup=keyboards.create_payment_keyboard(pay_url)
+                )
+                await state.clear()
+            else:
+                await callback.message.edit_text("❌ Не удалось создать счёт в CryptoBot. Попробуйте другой способ оплаты.")
+        except Exception as e:
+            logger.error(f"Failed to create CryptoBot topup invoice: {e}", exc_info=True)
+            await callback.message.edit_text("❌ Не удалось создать счёт в CryptoBot. Попробуйте другой способ оплаты.")
             await state.clear()
 
     @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_tonconnect")
@@ -2006,9 +2304,9 @@ def get_user_router() -> Router:
         
         final_price_float = float(price_rub_decimal)
 
-        pay_url = await _create_heleket_payment_request(
+        pay_url = await _create_cryptobot_invoice(
             user_id=callback.from_user.id,
-            price=final_price_float,
+            price_rub=final_price_float,
             months=plan['months'],
             host_name=data.get('host_name'),
             state_data=data
@@ -2021,7 +2319,7 @@ def get_user_router() -> Router:
             )
             await state.clear()
         else:
-            await callback.message.edit_text("❌ Не удалось создать счет Heleket. Попробуйте другой способ оплаты.")
+            await callback.message.edit_text("❌ Не удалось создать счёт в CryptoBot. Попробуйте другой способ оплаты.")
 
     @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_tonconnect")
     async def create_ton_invoice_handler(callback: types.CallbackQuery, state: FSMContext):
