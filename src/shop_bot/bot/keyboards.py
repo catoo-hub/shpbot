@@ -329,10 +329,11 @@ def create_payment_method_keyboard(
             builder.button(text="🏦 СБП / Банковская карта", callback_data="pay_yookassa")
         else:
             builder.button(text="🏦 Банковская карта", callback_data="pay_yookassa")
-    if pm.get("heleket"):
-        builder.button(text="💎 Криптовалюта", callback_data="pay_heleket")
+    # Крипто: единая кнопка
     if pm.get("cryptobot"):
-        builder.button(text="🤖 CryptoBot", callback_data="pay_cryptobot")
+        builder.button(text="💎 Криптовалюта", callback_data="pay_cryptobot")
+    elif pm.get("heleket"):
+        builder.button(text="💎 Криптовалюта", callback_data="pay_heleket")
     if pm.get("tonconnect"):
         callback_data_ton = "pay_tonconnect"
         logger.info(f"Creating TON button with callback_data: '{callback_data_ton}'")
@@ -393,10 +394,11 @@ def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboar
             builder.button(text="🏦 СБП / Банковская карта", callback_data="topup_pay_yookassa")
         else:
             builder.button(text="🏦 Банковская карта", callback_data="topup_pay_yookassa")
-    if pm.get("heleket"):
-        builder.button(text="💎 Криптовалюта", callback_data="topup_pay_heleket")
+    # Крипто: единая кнопка
     if pm.get("cryptobot"):
-        builder.button(text="🤖 CryptoBot", callback_data="topup_pay_cryptobot")
+        builder.button(text="💎 Криптовалюта", callback_data="topup_pay_cryptobot")
+    elif pm.get("heleket"):
+        builder.button(text="💎 Криптовалюта", callback_data="topup_pay_heleket")
     if pm.get("tonconnect"):
         builder.button(text="🪙 TON Connect", callback_data="topup_pay_tonconnect")
     if pm.get("stars"):
