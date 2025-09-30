@@ -670,16 +670,6 @@
 							</div>
 						</div>
 
-						<h3 class="h4">Настройка Wata.pro</h3>
-						<div class="mb-3 password-wrapper">
-							<label class="form-label" for="wata_access_token">Wata Access Token</label>
-							<div class="d-flex gap-2">
-								<input class="form-control" type="password" id="wata_access_token" name="wata_access_token" value="{{ settings.wata_access_token or '' }}" />
-								<button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
-							</div>
-							<div class="form-text">URL вебхука: <code>{{ request.url_root.rstrip('/') }}/wata-webhook</code></div>
-						</div>
-
 						<h3 class="h4">Настройка Heleket</h3>
 						<div class="mb-3">
 							<label class="form-label" for="heleket_merchant_id">Heleket Merchant ID</label>

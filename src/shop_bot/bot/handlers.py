@@ -93,88 +93,83 @@ async def _create_heleket_payment_request(
         logger.error("Heleket: не заданы merchant_id/api_key в настройках.")
         return None
 
-async def _create_wata_payment_link(
-    user_id: int,
-    price_rub: float,
-    months: int,
-    host_name: str | None,
-    state_data: dict,
-) -> str | None:
-    """
-    Создаёт платёжную ссылку в Wata.pro и возвращает URL.
-
-    Эндпоинт: POST https://api.wata.pro/api/h2h/links
-    Заголовки: { 'Authorization': 'Bearer <access-token>', 'Content-Type': 'application/json' }
-    Тело: { type, amount, currency, description, orderId, successRedirectUrl, failRedirectUrl }
-    """
-    token = (get_setting("wata_access_token") or "").strip()
-    if not token:
-        logger.error("Wata.pro: не указан access token в настройках.")
-        return None
-
+    # payment_id используем как order_id; параллельно сохраним pending по нему
     payment_id = str(uuid.uuid4())
 
-    # Собираем метаданные для дальнейшей обработки (и реферальной логики)
+    # Соберём metadata, на которое полагается обработка оплаты
     metadata = {
         "user_id": int(user_id),
         "months": int(months or 0),
-        "price": float(Decimal(str(price_rub)).quantize(Decimal("0.01"))),
+        "price": float(Decimal(str(price)).quantize(Decimal("0.01"))),
         "action": state_data.get("action"),
         "key_id": state_data.get("key_id"),
         "host_name": host_name or state_data.get("host_name"),
         "plan_id": state_data.get("plan_id"),
         "customer_email": state_data.get("customer_email"),
-        "payment_method": "Wata.pro",
+        "payment_method": "Heleket",
         "payment_id": payment_id,
     }
 
-    # Сохраняем pending по payment_id
+    # Сохраняем pending — даже если вебхук вернёт полное описание, фолбэк не помешает
     try:
         create_payload_pending(payment_id, user_id, float(metadata["price"]), metadata)
     except Exception as e:
-        logger.warning(f"Wata.pro: не удалось создать pending: {e}")
+        logger.warning(f"Heleket: не удалось создать pending: {e}")
 
-    amount_str = f"{Decimal(str(price_rub)).quantize(Decimal('0.01'))}"
+    # Соберём тело запроса Heleket
+    amount_str = f"{Decimal(str(price)).quantize(Decimal('0.01'))}"
     body: dict = {
-        "type": "ManyTime",
-        "amount": float(amount_str),  # Wata принимает число, но форматируем до 2 знаков
-        "currency": "RUB",
-        "orderId": payment_id,
+        "amount": amount_str,
+        "currency": "RUB",  # оплачиваем в рублях; плательщик выберет криптовалюту на стороне Heleket
+        "order_id": payment_id,
+        # Передаём метаданные строкой JSON — наш вебхук читает поле 'description'
         "description": json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
     }
-
-    # Редиректы после оплаты
+    # Вебхук для Heleket — если указан domain в настройках
     try:
-        if TELEGRAM_BOT_USERNAME:
-            url_back = f"https://t.me/{TELEGRAM_BOT_USERNAME}"
-            body["successRedirectUrl"] = url_back
-            body["failRedirectUrl"] = url_back
+        domain = (get_setting("domain") or "").strip()
     except Exception:
-        pass
+        domain = ""
+    if domain:
+        # Ожидаемый путь вебхука уже реализован во Flask: '/heleket-webhook'
+        # Если domain без завершающего '/', добавим
+        cb = f"{domain.rstrip('/')}/heleket-webhook"
+        body["url_callback"] = cb
+
+    # Подпись запроса
+    body_json = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    base64_payload = base64.b64encode(body_json.encode()).decode()
+    sign = hashlib.md5((base64_payload + api_key).encode()).hexdigest()
 
     headers = {
-        "Authorization": f"Bearer {token}",
+        "merchant": merchant_id,
+        "sign": sign,
         "Content-Type": "application/json",
     }
 
-    url = "https://api.wata.pro/api/h2h/links"
+    url = "https://api.heleket.com/v1/payment"
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=body, timeout=20) as resp:
-                if resp.status != 200 and resp.status != 201:
+                if resp.status != 200:
                     text = await resp.text()
-                    logger.error(f"Wata.pro: HTTP {resp.status}: {text}")
+                    logger.error(f"Heleket: HTTP {resp.status}: {text}")
                     return None
                 data = await resp.json(content_type=None)
-                # ожидаем объект с полем url
-                if isinstance(data, dict):
-                    pay_url = data.get("url")
-                    if pay_url:
-                        return pay_url
-                logger.error(f"Wata.pro: неожиданный ответ API: {data}")
+                # Успех: ожидаем state == 0 и presence of result.url
+                if isinstance(data, dict) and data.get("state") == 0:
+                    try:
+                        result = data.get("result") or {}
+                        pay_url = result.get("url")
+                        if pay_url:
+                            return pay_url
+                    except Exception:
+                        pass
+                logger.error(f"Heleket: неожиданный ответ API: {data}")
                 return None
     except Exception as e:
-        logger.error(f"Wata.pro: ошибка при создании ссылки: {e}", exc_info=True)
+        logger.error(f"Heleket: ошибка при создании инвойса: {e}", exc_info=True)
         return None
 
 async def _create_cryptobot_invoice(
@@ -1137,44 +1132,6 @@ def get_user_router() -> Router:
         except Exception as e:
             logger.error(f"Failed to create CryptoBot topup invoice: {e}", exc_info=True)
             await callback.message.edit_text("❌ Не удалось создать счёт в CryptoBot. Попробуйте другой способ оплаты.")
-            await state.clear()
-
-    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_wata")
-    async def topup_pay_wata(callback: types.CallbackQuery, state: FSMContext):
-        await callback.answer("Создаю ссылку Wata.pro...")
-        data = await state.get_data()
-        user_id = callback.from_user.id
-        amount = float(data.get('topup_amount', 0))
-        if amount <= 0:
-            await callback.message.edit_text("❌ Некорректная сумма пополнения. Повторите ввод.")
-            await state.clear()
-            return
-        state_data = {
-            "action": "top_up",
-            "customer_email": None,
-            "plan_id": None,
-            "host_name": None,
-            "key_id": None,
-        }
-        try:
-            url = await _create_wata_payment_link(
-                user_id=user_id,
-                price_rub=float(amount),
-                months=0,
-                host_name="",
-                state_data=state_data,
-            )
-            if url:
-                await callback.message.edit_text(
-                    "Нажмите на кнопку ниже для оплаты:",
-                    reply_markup=keyboards.create_payment_keyboard(url)
-                )
-                await state.clear()
-            else:
-                await callback.message.edit_text("❌ Не удалось создать ссылку Wata.pro. Попробуйте другой способ оплаты.")
-        except Exception as e:
-            logger.error(f"Failed to create Wata.pro topup link: {e}", exc_info=True)
-            await callback.message.edit_text("❌ Не удалось создать ссылку Wata.pro. Попробуйте другой способ оплаты.")
             await state.clear()
 
     @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_tonconnect")
@@ -2453,51 +2410,6 @@ def get_user_router() -> Router:
         except Exception as e:
             logger.error(f"CryptoBot manual check: process_successful_payment failed: {e}", exc_info=True)
             await callback.message.answer("⚠️ Оплата получена, но обработка не завершена. Обратитесь в поддержку.")
-
-    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_wata")
-    async def create_wata_payment_handler(callback: types.CallbackQuery, state: FSMContext):
-        await callback.answer("Создаю ссылку Wata.pro...")
-        data = await state.get_data()
-        user_data = get_user(callback.from_user.id)
-
-        plan_id = data.get('plan_id')
-        plan = get_plan_by_id(plan_id)
-        if not plan:
-            await callback.message.answer("Произошла ошибка при выборе тарифа.")
-            await state.clear()
-            return
-
-        base_price = Decimal(str(plan['price']))
-        price_rub = base_price
-        if user_data.get('referred_by') and user_data.get('total_spent', 0) == 0:
-            discount_percentage_str = get_setting("referral_discount") or "0"
-            discount_percentage = Decimal(discount_percentage_str)
-            if discount_percentage > 0:
-                discount_amount = (base_price * discount_percentage / 100).quantize(Decimal("0.01"))
-                price_rub = base_price - discount_amount
-
-        months = plan['months']
-        try:
-            url = await _create_wata_payment_link(
-                user_id=callback.from_user.id,
-                price_rub=float(price_rub),
-                months=months,
-                host_name=data.get('host_name'),
-                state_data=data,
-            )
-            if url:
-                await callback.message.edit_text(
-                    "Нажмите на кнопку ниже для оплаты:",
-                    reply_markup=keyboards.create_payment_keyboard(url)
-                )
-                await state.clear()
-            else:
-                await callback.message.edit_text("❌ Не удалось создать ссылку Wata.pro. Попробуйте другой способ оплаты.")
-                await state.clear()
-        except Exception as e:
-            logger.error(f"Failed to create Wata.pro link: {e}", exc_info=True)
-            await callback.message.answer("Не удалось создать ссылку на оплату Wata.pro")
-            await state.clear()
 
     @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_tonconnect")
     async def create_ton_invoice_handler(callback: types.CallbackQuery, state: FSMContext):

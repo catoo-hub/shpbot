@@ -16,9 +16,6 @@ from flask_wtf.csrf import CSRFProtect, generate_csrf
 import secrets
 import urllib.parse
 import urllib.request
-import httpx
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -82,8 +79,6 @@ ALL_SETTINGS_KEYS = [
     "yoomoney_enabled", "yoomoney_wallet", "yoomoney_secret", "stars_per_rub", "stars_enabled",
     # YooMoney OAuth optional keys + stored access token
     "yoomoney_api_token", "yoomoney_client_id", "yoomoney_client_secret", "yoomoney_redirect_uri",
-    # Wata.pro
-    "wata_access_token",
 ]
 
 def create_webhook_app(bot_controller_instance):
@@ -1728,81 +1723,6 @@ def create_webhook_app(bot_controller_instance):
             return 'OK', 200
         except Exception as e:
             logger.error(f"Ошибка в обработчике вебхука YooKassa: {e}", exc_info=True)
-            return 'Error', 500
-        
-    # --- Wata.pro webhook ---
-    _WATA_PUBLIC_KEY_CACHE = {"pem": None, "fetched_at": 0}
-
-    def _fetch_wata_public_key() -> str | None:
-        try:
-            # Можно кэшировать, но размер ключа небольшой; при желании добавить TTL
-            resp = httpx.get("https://api.wata.pro/api/h2h/public-key", timeout=10.0)
-            if resp.status_code != 200:
-                logger.error(f"Wata.pro public-key HTTP {resp.status_code}: {resp.text}")
-                return None
-            data = resp.json()
-            return (data.get("value") or "").strip() or None
-        except Exception as e:
-            logger.error(f"Wata.pro public-key fetch failed: {e}")
-            return None
-
-    def _wata_verify_signature(raw_json: str, signature_b64: str, public_key_pem: str) -> bool:
-        try:
-            pub = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
-            sig = base64.b64decode(signature_b64)
-            pub.verify(sig, raw_json.encode("utf-8"), padding.PKCS1v15(), hashes.SHA512())
-            return True
-        except Exception as e:
-            logger.warning(f"Wata.pro signature verify failed: {e}")
-            return False
-
-    @csrf.exempt
-    @flask_app.route('/wata-webhook', methods=['POST'])
-    def wata_webhook_handler():
-        try:
-            raw = request.get_data(as_text=True) or ""
-            if not raw:
-                return 'Bad Request', 400
-            signature = request.headers.get('X-Signature') or ''
-            if not signature:
-                return 'Forbidden', 403
-
-            pub_pem = _fetch_wata_public_key()
-            if not pub_pem:
-                logger.error("Wata.pro webhook: cannot fetch public key")
-                return 'Error', 500
-            if not _wata_verify_signature(raw, signature, pub_pem):
-                return 'Forbidden', 403
-
-            data = request.json or {}
-            status = (data.get('transactionStatus') or '').lower()
-            if status == 'paid':
-                order_id = data.get('orderId')
-                metadata = None
-                # Попробуем найти pending по order_id (мы его сохраняем как payment_id)
-                if order_id:
-                    try:
-                        metadata = find_and_complete_pending_transaction(order_id)
-                    except Exception:
-                        metadata = None
-                # Фолбэк: если нет pending, пробуем считать JSON из orderDescription
-                if not metadata:
-                    try:
-                        desc = data.get('orderDescription')
-                        if desc:
-                            metadata = json.loads(desc)
-                    except Exception:
-                        metadata = None
-
-                if metadata:
-                    bot = _bot_controller.get_bot_instance()
-                    loop = current_app.config.get('EVENT_LOOP')
-                    payment_processor = handlers.process_successful_payment
-                    if bot and loop and loop.is_running():
-                        asyncio.run_coroutine_threadsafe(payment_processor(bot, metadata), loop)
-            return 'OK', 200
-        except Exception as e:
-            logger.error(f"Ошибка в обработчике вебхука Wata.pro: {e}", exc_info=True)
             return 'Error', 500
         
     @csrf.exempt
