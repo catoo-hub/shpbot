@@ -16,7 +16,8 @@ dependencies = [
     "aiohttp-sse-client==0.2.1",
     "pytonconnect==0.3.2",
     "paramiko==3.5.0",
-    "colorama==0.4.6"
+    "colorama==0.4.6",
+    "cryptography==43.0.1"
 ]
 
 [project.optional-dependencies]

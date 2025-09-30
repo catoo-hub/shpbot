@@ -311,6 +311,8 @@ def create_payment_method_keyboard(
         "yoomoney": ((get_setting("yoomoney_enabled") or "false").strip().lower() == "true"),
         # Stars вычисляем по флагу; детальная проверка коэффициента делается далее в хендлерах
         "stars": ((get_setting("stars_enabled") or "false").strip().lower() == "true"),
+        # Wata.pro
+        "wata": bool(get_setting("wata_access_token") or ""),
     }
 
     # Кнопки оплаты с балансов (если разрешено/достаточно средств)
@@ -342,6 +344,8 @@ def create_payment_method_keyboard(
         builder.button(text="⭐ Telegram Stars", callback_data="pay_stars")
     if pm.get("yoomoney"):
         builder.button(text="💜 ЮMoney (кошелёк)", callback_data="pay_yoomoney")
+    if pm.get("wata"):
+        builder.button(text="💳 Wata.pro", callback_data="pay_wata")
 
     builder.button(text="⬅️ Назад", callback_data="back_to_email_prompt")
     builder.adjust(1)
@@ -387,6 +391,7 @@ def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboar
         "tonconnect": bool((get_setting("ton_wallet_address") or "") and (get_setting("tonapi_key") or "")),
         "yoomoney": ((get_setting("yoomoney_enabled") or "false").strip().lower() == "true"),
         "stars": ((get_setting("stars_enabled") or "false").strip().lower() == "true"),
+        "wata": bool(get_setting("wata_access_token") or ""),
     }
     # Только внешние способы оплаты, без оплаты с баланса
     if pm.get("yookassa"):
@@ -405,6 +410,8 @@ def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboar
         builder.button(text="⭐ Telegram Stars", callback_data="topup_pay_stars")
     if pm.get("yoomoney"):
         builder.button(text="💜 ЮMoney (кошелёк)", callback_data="topup_pay_yoomoney")
+    if pm.get("wata"):
+        builder.button(text="💳 Wata.pro", callback_data="topup_pay_wata")
 
     builder.button(text="⬅️ Назад", callback_data="show_profile")
     builder.adjust(1)
