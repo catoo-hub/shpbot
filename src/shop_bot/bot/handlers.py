@@ -178,7 +178,7 @@ async def _create_cryptobot_invoice(
     months: int,
     host_name: str | None,
     state_data: dict,
-) -> str | None:
+) -> tuple[str, int] | None:
     """
     Создание инвойса в Crypto Pay (CryptoBot) и возврат bot_invoice_url.
 
@@ -243,8 +243,9 @@ async def _create_cryptobot_invoice(
                 if isinstance(data, dict) and data.get("ok") and isinstance(data.get("result"), dict):
                     res = data["result"]
                     pay_url = res.get("bot_invoice_url") or res.get("invoice_url")
-                    if pay_url:
-                        return pay_url
+                    invoice_id = res.get("invoice_id")
+                    if pay_url and invoice_id is not None:
+                        return pay_url, int(invoice_id)
                 logger.error(f"CryptoBot: неожиданный ответ API: {data}")
                 return None
     except Exception as e:
@@ -1112,17 +1113,18 @@ def get_user_router() -> Router:
             "key_id": None,
         }
         try:
-            pay_url = await _create_cryptobot_invoice(
+            result = await _create_cryptobot_invoice(
                 user_id=user_id,
                 price_rub=float(amount),
                 months=0,
                 host_name="",
                 state_data=state_data,
             )
-            if pay_url:
+            if result:
+                pay_url, invoice_id = result
                 await callback.message.edit_text(
                     "Нажмите на кнопку ниже для оплаты:",
-                    reply_markup=keyboards.create_payment_keyboard(pay_url)
+                    reply_markup=keyboards.create_cryptobot_payment_keyboard(pay_url, invoice_id)
                 )
                 await state.clear()
             else:
@@ -2304,7 +2306,7 @@ def get_user_router() -> Router:
         
         final_price_float = float(price_rub_decimal)
 
-        pay_url = await _create_cryptobot_invoice(
+        result = await _create_cryptobot_invoice(
             user_id=callback.from_user.id,
             price_rub=final_price_float,
             months=plan['months'],
@@ -2312,14 +2314,102 @@ def get_user_router() -> Router:
             state_data=data
         )
         
-        if pay_url:
+        if result:
+            pay_url, invoice_id = result
             await callback.message.edit_text(
                 "Нажмите на кнопку ниже для оплаты:",
-                reply_markup=keyboards.create_payment_keyboard(pay_url)
+                reply_markup=keyboards.create_cryptobot_payment_keyboard(pay_url, invoice_id)
             )
             await state.clear()
         else:
             await callback.message.edit_text("❌ Не удалось создать счёт в CryptoBot. Попробуйте другой способ оплаты.")
+
+    @user_router.callback_query(F.data.startswith("check_crypto_invoice:"))
+    async def check_crypto_invoice_handler(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+        await callback.answer("Проверяю статус оплаты...")
+        try:
+            parts = (callback.data or "").split(":", 1)
+            invoice_id_str = parts[1] if len(parts) > 1 else ""
+            invoice_id = int(invoice_id_str)
+        except Exception:
+            await callback.message.answer("❌ Некорректный идентификатор инвойса.")
+            return
+
+        token = (get_setting("cryptobot_token") or "").strip()
+        if not token:
+            await callback.message.answer("❌ CryptoBot токен не задан.")
+            return
+
+        url = "https://pay.crypt.bot/api/getInvoices"
+        headers = {
+            "Crypto-Pay-API-Token": token,
+            "Content-Type": "application/json",
+        }
+        body = {"invoice_ids": [invoice_id]}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=body, timeout=20) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        logger.error(f"CryptoBot getInvoices HTTP {resp.status}: {text}")
+                        await callback.message.answer("⏳ Оплата ещё не поступила. Попробуйте позже.")
+                        return
+                    data = await resp.json(content_type=None)
+        except Exception as e:
+            logger.error(f"CryptoBot getInvoices failed: {e}", exc_info=True)
+            await callback.message.answer("⏳ Не удалось проверить статус. Попробуйте позже.")
+            return
+
+        # Разбираем результат: возможные варианты структуры
+        invoices = []
+        if isinstance(data, dict) and data.get("ok"):
+            res = data.get("result")
+            if isinstance(res, dict) and isinstance(res.get("items"), list):
+                invoices = res.get("items")
+            elif isinstance(res, list):
+                invoices = res
+
+        if not invoices:
+            await callback.message.answer("⏳ Оплата ещё не поступила. Попробуйте позже.")
+            return
+
+        inv = invoices[0]
+        status = (inv.get("status") or inv.get("invoice_status") or "").lower()
+        if status != "paid":
+            await callback.message.answer("⏳ Оплата ещё не поступила. Попробуйте позже.")
+            return
+
+        payload_string = inv.get("payload")
+        if not payload_string:
+            await callback.message.answer("⚠️ Оплата получена, но отсутствует payload. Обратитесь в поддержку.")
+            return
+
+        # Парсим payload по тому же формату, что и вебхук в app.py
+        p = payload_string.split(":")
+        if len(p) < 9:
+            await callback.message.answer("⚠️ Оплата получена, но формат данных некорректен. Обратитесь в поддержку.")
+            return
+
+        metadata = {
+            "user_id": p[0],
+            "months": p[1],
+            "price": p[2],
+            "action": p[3],
+            "key_id": p[4],
+            "host_name": p[5],
+            "plan_id": p[6],
+            "customer_email": (p[7] if p[7] != 'None' else None),
+            "payment_method": p[8],
+            "transaction_id": str(invoice_id),
+        }
+
+        try:
+            await process_successful_payment(bot, metadata)
+            await callback.message.answer("✅ Оплата получена! Профиль/баланс скоро обновится.")
+        except Exception as e:
+            logger.error(f"CryptoBot manual check: process_successful_payment failed: {e}", exc_info=True)
+            await callback.message.answer("⚠️ Оплата получена, но обработка не завершена. Обратитесь в поддержку.")
 
     @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_tonconnect")
     async def create_ton_invoice_handler(callback: types.CallbackQuery, state: FSMContext):
@@ -2474,10 +2564,18 @@ async def process_successful_payment(bot: Bot, metadata: dict):
         user_id = int(metadata.get('user_id'))
         price = float(metadata.get('price'))
         # Поля ниже нужны только для покупок ключей/продлений
-        months = int(metadata.get('months', 0))
-        key_id = int(metadata.get('key_id', 0)) if metadata.get('key_id') is not None else 0
+        def _to_int(val, default=0):
+            try:
+                if val in (None, '', 'None', 'null'):
+                    return default
+                return int(val)
+            except (ValueError, TypeError):
+                return default
+
+        months = _to_int(metadata.get('months'), 0)
+        key_id = _to_int(metadata.get('key_id'), 0)
         host_name = metadata.get('host_name', '')
-        plan_id = int(metadata.get('plan_id', 0)) if metadata.get('plan_id') is not None else 0
+        plan_id = _to_int(metadata.get('plan_id'), 0)
         customer_email = metadata.get('customer_email')
         payment_method = metadata.get('payment_method')
 
