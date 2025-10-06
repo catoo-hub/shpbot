@@ -66,8 +66,6 @@ from shop_bot.config import (
 TELEGRAM_BOT_USERNAME = None
 PAYMENT_METHODS = None
 ADMIN_ID = None  # устаревшее: используйте is_admin()
-CRYPTO_BOT_TOKEN = get_setting("cryptobot_token")
-
 logger = logging.getLogger(__name__)
 
 async def _create_heleket_payment_request(
